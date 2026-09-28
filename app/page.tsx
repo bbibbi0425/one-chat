@@ -1,17 +1,20 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import Peer from "peerjs";
-import { Check, Clock3, Copy, Info, LoaderCircle, LogOut, Send } from "lucide-react";
+import { Check, Copy, Info, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { Composer } from "@/components/chat/composer";
+import { RoomTimer } from "@/components/chat/room-timer";
+import { Transcript } from "@/components/chat/transcript";
+import { EMPTY_TRANSCRIPT, MAX_RETAINED_MESSAGES, transcriptReducer } from "@/lib/transcript";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { PeerChat } from "@/lib/peer-chat";
 import type { ChatStatus } from "@/lib/peer-chat";
-import { createInvite, inviteHash, parseInvite, MAX_MESSAGE_CHARS, MAX_NICKNAME_CHARS } from "@/lib/protocol";
-import type { ChatMessage, Invite, Role } from "@/lib/protocol";
+import { createInvite, inviteHash, parseInvite, MAX_NICKNAME_CHARS } from "@/lib/protocol";
+import type { Invite, Role } from "@/lib/protocol";
 import { useRoomStatusTool } from "@/hooks/use-room-status-tool";
 
-type RoomView = { invite: Invite; role: Role; nickname: string };
+type RoomView = { invite: Invite; role: Role; nickname: string; chat: PeerChat };
 const labels: Record<ChatStatus, string> = { preparing: "준비 중", waiting: "대기 중", connecting: "연결 중", authenticating: "확인 중", connected: "연결됨" };
 function explanation(reason: string) {
   if (reason === "ROOM_EXPIRED") return "방의 9시간이 끝났어요. 새 방을 만들어 주세요.";
@@ -27,10 +30,6 @@ function readInvite(): { invite: Invite | null; error: string } {
   catch (error) { return { invite: null, error: error instanceof Error && error.message === "ROOM_EXPIRED" ? explanation("ROOM_EXPIRED") : "초대 링크가 올바르지 않아요. 링크 전체를 다시 받아 주세요." }; }
 }
 function stripHash() { window.history.replaceState(null, "", window.location.pathname + window.location.search); }
-function timeLabel(ms: number) {
-  const seconds = Math.max(0, Math.floor(ms / 1000));
-  return [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, seconds % 60].map(v => String(v).padStart(2, "0")).join(":");
-}
 export default function Home() {
   const [entry, setEntry] = useState(readInvite);
   const [nickname, setNickname] = useState("");
@@ -39,24 +38,18 @@ export default function Home() {
   const [remoteName, setRemoteName] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [unconfirmed, setUnconfirmed] = useState<Set<string>>(() => new Set());
-  const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
-  const [remaining, setRemaining] = useState(0);
+  const [history, dispatch] = useReducer(transcriptReducer, EMPTY_TRANSCRIPT);
   const [copied, setCopied] = useState(false);
   const [copyFallback, setCopyFallback] = useState("");
   const active = useRef<PeerChat | null>(null);
   const generation = useRef(0);
-  const sendLock = useRef(false);
-  const scrollBox = useRef<HTMLDivElement>(null);
+
   const helpTitle = useRef<HTMLHeadingElement>(null);
-  const stayAtBottom = useRef(true);
   useRoomStatusTool({ joined: !!room, connection: room ? labels[status] : "입장 전", expiresAt: room?.invite.expiresAt ?? null });
 
   const clearView = useCallback((message: string) => {
-    setRoom(null); setMessages([]); setUnconfirmed(new Set()); setDraft(""); setNickname(""); setRemoteName("");
-    setSending(false); sendLock.current = false; setError(""); setNotice(message);
+    setRoom(null); dispatch({ type: "clear" }); setNickname(""); setRemoteName("");
+    setError(""); setNotice(message);
     setCopyFallback(""); setCopied(false); setEntry({ invite: null, error: "" });
   }, []);
   const stopTransport = useCallback((reason = "LEFT_ROOM") => {
@@ -75,15 +68,11 @@ export default function Home() {
     const pagehide = () => end();
     const pageshow = (event: PageTransitionEvent) => { if (event.persisted) end(); };
     window.addEventListener("hashchange", hashchange); window.addEventListener("pagehide", pagehide); window.addEventListener("pageshow", pageshow);
-    const timer = setInterval(() => { if (active.current) { active.current.tick(); setRemaining(active.current?.remaining ?? 0); } }, 1000);
     return () => {
-      window.removeEventListener("hashchange", hashchange); window.removeEventListener("pagehide", pagehide); window.removeEventListener("pageshow", pageshow); clearInterval(timer);
+      window.removeEventListener("hashchange", hashchange); window.removeEventListener("pagehide", pagehide); window.removeEventListener("pageshow", pageshow);
       stopTransport();
     };
   }, [end, stopTransport]);
-  useEffect(() => {
-    if (stayAtBottom.current && scrollBox.current) scrollBox.current.scrollTop = scrollBox.current.scrollHeight;
-  }, [messages]);
 
   function enterRoom() {
     if (active.current || !nickname.trim()) return;
@@ -93,28 +82,23 @@ export default function Home() {
     try {
       const invite = entry.invite ?? createInvite();
       if (invite.expiresAt <= Date.now()) { setError(explanation("ROOM_EXPIRED")); return; }
-      const target: RoomView = { invite, role: entry.invite ? "guest" : "host", nickname: nickname.trim() };
-      setRoom(target); setEntry({ invite: null, error: "" }); setStatus("preparing"); setMessages([]); setUnconfirmed(new Set()); stayAtBottom.current = true;
+      const target: Omit<RoomView, "chat"> = { invite, role: entry.invite ? "guest" : "host", nickname: nickname.trim() };
+      setEntry({ invite: null, error: "" }); setStatus("preparing"); dispatch({ type: "clear" });
       const chat = new PeerChat({ ...target, createPeer: (id, options) => new Peer(id, options),
         onStatus: (next, name) => { if (generation.current === current) { setStatus(next); if (name) setRemoteName(name); } },
-        onMessage: message => { if (generation.current === current) setMessages(list => [...list, message]); },
-        onDelivered: id => { if (generation.current === current) { setMessages(list => list.map(m => m.id === id ? { ...m, delivered: true } : m)); setUnconfirmed(ids => { const next = new Set(ids); next.delete(id); return next; }); } },
-        onUnconfirmed: id => { if (generation.current === current) setUnconfirmed(ids => new Set([...ids, id])); },
+        onMessage: message => { if (generation.current === current) dispatch({ type: "append", message }); },
+        onDelivered: id => { if (generation.current === current) dispatch({ type: "delivered", id }); },
+        onUnconfirmed: id => { if (generation.current === current) dispatch({ type: "unconfirmed", id }); },
         onEnd: reason => { if (generation.current === current) { generation.current++; active.current = null; clearView(explanation(reason)); } },
       });
-      active.current = chat; setRemaining(chat.remaining); stripHash(); chat.start();
+      active.current = chat; setRoom({ ...target, chat }); stripHash(); chat.start();
     } catch { end("CONNECTION_FAILED"); }
   }
-  async function sendMessage() {
-    if (!active.current || status !== "connected" || sendLock.current || !draft.trim()) return;
-    const current = generation.current; sendLock.current = true; stayAtBottom.current = true; setSending(true); setError("");
-    try {
-      await active.current.send(draft);
-      if (current === generation.current) { setDraft(""); }
-    } catch (error) {
-      if (current === generation.current) setError(error instanceof Error && error.message === "MESSAGE_LIMIT" ? "이 방의 전송 한도에 도달했어요. 전달을 기다리거나 새 방을 만들어 주세요." : "메시지를 보내지 못했어요. 연결 상태를 확인해 주세요.");
-    } finally { if (current === generation.current) { sendLock.current = false; setSending(false); } }
-  }
+  const sendMessage = useCallback(async (text: string) => {
+    const chat = active.current;
+    if (!chat) throw new Error("DISCONNECTED");
+    await chat.send(text);
+  }, []);
   async function copyLink() {
     if (!room || room.role !== "host") return;
     const current = generation.current;
@@ -135,6 +119,7 @@ export default function Home() {
           <div className="help-copy">
             <p>방을 만든 뒤 초대 링크를 한 사람에게 공유하세요. 둘 다 이 창을 열어 둔 동안 대화할 수 있어요.</p>
             <p>새로고침·나가기·연결 종료 시 대화가 끝나며 이전 내용은 다시 불러올 수 없어요. 연결 종료 감지에는 시간이 걸릴 수 있어요.</p>
+            <p>대화는 최근 {MAX_RETAINED_MESSAGES}개만 남겨요. 새 메시지로 한도를 넘으면 가장 오래된 내용부터 지우며 복원할 수 없어요. 지워져도 방과 연결은 유지돼요.</p>
             <p>메시지는 이 탭의 메모리에만 두고 앱의 DB·브라우저 저장소에 기록하지 않아요. ‘전달됨’은 상대 앱에 도착했다는 뜻이며 읽음 표시는 아니에요.</p>
             <p>초대 링크에는 비밀 키가 포함돼요. 링크를 가진 사람이 참여할 수 있으며 닉네임은 신원 인증이 아니에요. 9시간 만료는 각 브라우저에서 적용해요.</p>
             <p>연결에 PeerJS Cloud와 Google STUN을 사용하며 IP·접속 정보가 남을 수 있어요. 회사 기기의 기록이나 상대방의 복사본까지 지우거나 숨기는 기능은 아니에요.</p>
@@ -156,7 +141,7 @@ export default function Home() {
         {(entry.invite || entry.error) && <Button variant="ghost" className="new-room-link" onClick={() => { setEntry({ invite: null, error: "" }); setError(""); }}>새 방 만들기</Button>}
         <p className="entry-hint">{entry.invite ? "방을 만든 사람이 창을 열어 두어야 해요." : "방을 만든 뒤 초대 링크를 공유하세요."}</p>
       </div>
-    </section> : <section className="chat-panel" aria-label="대화방">
+    </section> : <section className="chat-panel" aria-label="대화방" key={room.invite.hostId}>
       <header className="chat-header">
         <div className="chat-toolbar">
           <div className="room-identity">
@@ -170,23 +155,13 @@ export default function Home() {
         </div>
         <div className="room-meta">
           <span role="status" className={`connection-state ${status === "connected" ? "online" : ""}`}><i aria-hidden="true" />{labels[status]}</span>
-          <span className="room-timer" role="timer" aria-label={`방 만료까지 ${timeLabel(remaining)}`} title="방 만료까지 남은 시간"><Clock3 size={13} aria-hidden="true" />{timeLabel(remaining)}</span>
+          <span className="history-limit" title="오래된 내용부터 자동 삭제되며 복원되지 않아요">최근 {MAX_RETAINED_MESSAGES}개 유지</span>
+          <RoomTimer chat={room.chat} />
         </div>
       </header>
       {copyFallback && status !== "connected" && <div className="manual-copy"><label htmlFor="invite-link">링크를 선택해 복사하세요</label><Input id="invite-link" readOnly value={copyFallback} onFocus={e => e.target.select()} /></div>}
-      <div className="message-list" ref={scrollBox} tabIndex={0} role="log" aria-label="대화 내용" aria-live="polite" aria-relevant="additions" onScroll={() => { const box = scrollBox.current; if (box) stayAtBottom.current = box.scrollHeight - box.scrollTop - box.clientHeight < 100; }}>
-        {messages.length === 0 && <div className="empty-chat">{status === "connecting" || status === "authenticating" || status === "preparing" ? <LoaderCircle className="spin" size={18} aria-hidden="true" /> : null}<p>{status === "connected" ? "메시지를 입력하세요." : room.role === "host" ? "링크를 공유하고 기다려 주세요." : "연결하고 있어요."}</p></div>}
-        {messages.map(message => <article className={`message ${message.mine ? "mine" : ""}`} key={message.id}>
-          <span className="message-author">{message.nickname}{message.mine ? " · 나" : ""}</span>
-          <div className="message-bubble">{message.text}</div>
-          <time dateTime={new Date(message.time).toISOString()}>{new Date(message.time).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false })}{message.mine && ` · ${message.delivered ? "전달됨" : unconfirmed.has(message.id) ? "전달 확인 안 됨" : "전달 중"}`}</time>
-        </article>)}
-      </div>
-      <form className="composer" onSubmit={event => { event.preventDefault(); void sendMessage(); }}>
-        {error && <div className="error" role="alert" tabIndex={0}>{error}</div>}
-        <div className="compose-row"><Textarea aria-label="메시지" autoComplete="off" spellCheck={false} placeholder={status === "connected" ? "메시지 입력" : "연결 대기 중"} maxLength={MAX_MESSAGE_CHARS} value={draft} readOnly={sending} disabled={status !== "connected"} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void sendMessage(); } }} /><Button type="submit" className="send-button" aria-label="메시지 보내기" disabled={sending || status !== "connected" || !draft.trim()}>{sending ? <LoaderCircle className="spin" aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}</Button></div>
-        <div className="composer-hint"><span>Enter 전송 · Shift+Enter 줄바꿈</span><span>{draft.length.toLocaleString()}/2,000</span></div>
-      </form>
+      <Transcript history={history} status={status} role={room.role} />
+      <Composer connected={status === "connected"} onSend={sendMessage} />
     </section>}
   </main>;
 }

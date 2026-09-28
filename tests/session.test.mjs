@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { SecureSession } from "../lib/secure-session.ts";
+import { EMPTY_TRANSCRIPT, transcriptReducer } from "../lib/transcript.ts";
 import { createInvite, inviteHash, parseInvite, randomPeerId, randomToken, ROOM_TTL_MS, MAX_MESSAGES, MAX_FRAME_CHARS } from "../lib/protocol.ts";
 import { deriveTrafficKeys, makeProof, verifyProof, seal, unseal } from "../lib/crypto.ts";
 async function until(predicate) {
@@ -132,4 +133,43 @@ test("authentication timeout starts when the data channel becomes usable", async
   const session = new SecureSession({ invite, role: "guest", localId: randomPeerId(), remoteId: invite.hostId, nickname: "n", monotonic: () => mono, send() {}, closeWire() {}, onReady() {}, onMessage() {}, onDelivered() {}, onUnconfirmed() {}, onClose: r => { reason = r; } });
   mono = 20000; session.start(); session.tick(); assert.equal(session.ended, false);
   mono = 35000; session.tick(); assert.equal(reason, "AUTH_TIMEOUT");
+});
+
+test("evicting old text keeps an authenticated conversation and delivery receipts working", async () => {
+  let hostView = EMPTY_TRANSCRIPT, guestView = EMPTY_TRANSCRIPT, delivered = 0;
+  const p = pair({
+    host: {
+      onMessage: message => { hostView = transcriptReducer(hostView, { type: "append", message }); },
+      onDelivered: id => { hostView = transcriptReducer(hostView, { type: "delivered", id }); delivered++; },
+    },
+    guest: {
+      onMessage: message => { guestView = transcriptReducer(guestView, { type: "append", message }); },
+      onDelivered: id => { guestView = transcriptReducer(guestView, { type: "delivered", id }); delivered++; },
+    },
+  });
+  await ready(p);
+  for (let i = 0; i < 150; i++) {
+    await (i % 2 ? p.host : p.guest).sendMessage(`ongoing-${i}`);
+    await until(() => delivered === i + 1);
+    assert.ok(hostView.messages.length <= 50 && guestView.messages.length <= 50);
+  }
+  assert.equal(p.host.ready && p.guest.ready, true); assert.deepEqual(p.closed, []);
+  for (const view of [hostView, guestView]) {
+    assert.equal(view.messages.length, 50); assert.equal(view.trimmedCount, 100);
+    assert.equal(view.messages[0].text, "ongoing-100"); assert.equal(view.messages[49].text, "ongoing-149");
+    assert.ok(view.messages.every(message => message.delivery === "delivered"));
+  }
+});
+test("automatic heartbeats keep the session open during a ten-minute pause in human messages", async () => {
+  const p = pair(); await ready(p);
+  for (let step = 0; step < 40; step++) {
+    const frames = p.trace.length;
+    p.clock.wall += 15000; p.clock.mono += 15000;
+    p.host.tick(); p.guest.tick();
+    await until(() => p.trace.length >= frames + 4);
+    assert.equal(p.host.ready && p.guest.ready, true);
+  }
+  assert.equal(p.hostMessages.length + p.guestMessages.length, 0);
+  await p.host.sendMessage("다시 이어서"); await until(() => p.delivered.length === 1);
+  assert.equal(p.guestMessages[0].text, "다시 이어서"); assert.deepEqual(p.closed, []);
 });
