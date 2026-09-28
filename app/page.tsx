@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Peer from "peerjs";
-import { ArrowRight, Check, Clock3, Copy, Link2, LoaderCircle, LockKeyhole, LogOut, MessageCircle, Send, ShieldCheck } from "lucide-react";
+import { Check, Clock3, Copy, Info, LoaderCircle, LogOut, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { PeerChat } from "@/lib/peer-chat";
 import type { ChatStatus } from "@/lib/peer-chat";
 import { createInvite, inviteHash, parseInvite, MAX_MESSAGE_CHARS, MAX_NICKNAME_CHARS } from "@/lib/protocol";
@@ -11,7 +12,7 @@ import type { ChatMessage, Invite, Role } from "@/lib/protocol";
 import { useRoomStatusTool } from "@/hooks/use-room-status-tool";
 
 type RoomView = { invite: Invite; role: Role; nickname: string };
-const labels: Record<ChatStatus, string> = { preparing: "방 준비 중", waiting: "상대방 기다리는 중", connecting: "연결 중", authenticating: "초대 확인 중", connected: "연결됨" };
+const labels: Record<ChatStatus, string> = { preparing: "준비 중", waiting: "대기 중", connecting: "연결 중", authenticating: "확인 중", connected: "연결됨" };
 function explanation(reason: string) {
   if (reason === "ROOM_EXPIRED") return "방의 9시간이 끝났어요. 새 방을 만들어 주세요.";
   if (reason === "LEFT_ROOM") return "방에서 나왔어요. 이전 대화는 다시 불러올 수 없어요.";
@@ -49,6 +50,7 @@ export default function Home() {
   const generation = useRef(0);
   const sendLock = useRef(false);
   const scrollBox = useRef<HTMLDivElement>(null);
+  const helpTitle = useRef<HTMLHeadingElement>(null);
   const stayAtBottom = useRef(true);
   useRoomStatusTool({ joined: !!room, connection: room ? labels[status] : "입장 전", expiresAt: room?.invite.expiresAt ?? null });
 
@@ -120,62 +122,71 @@ export default function Home() {
     try { await navigator.clipboard.writeText(link); if (generation.current === current) setCopied(true); }
     catch { if (generation.current === current) setCopyFallback(link); }
   }
-  return <main className="app-shell">
+  return <main className={`app-shell ${room ? "in-room" : "at-entry"}`}>
     <header className="site-header">
-      <div className="brand"><span className="brand-icon"><MessageCircle size={21} /></span> one-chat<span className="brand-dot">.</span></div>
-      <span className="header-note"><LockKeyhole size={14} /> 링크 하나로 만나는 두 사람</span>
+      <span className="brand">one-chat</span>
+      <Dialog>
+        <DialogTrigger asChild><Button variant="ghost" className="help-button"><Info aria-hidden="true" />안내</Button></DialogTrigger>
+        <DialogContent className="help-dialog" showCloseButton={false} onOpenAutoFocus={event => { event.preventDefault(); helpTitle.current?.focus(); }}>
+          <DialogHeader>
+            <DialogTitle ref={helpTitle} tabIndex={-1}>사용 안내</DialogTitle>
+            <DialogDescription>두 사람 전용 · 최대 9시간</DialogDescription>
+          </DialogHeader>
+          <div className="help-copy">
+            <p>방을 만든 뒤 초대 링크를 한 사람에게 공유하세요. 둘 다 이 창을 열어 둔 동안 대화할 수 있어요.</p>
+            <p>새로고침·나가기·연결 종료 시 대화가 끝나며 이전 내용은 다시 불러올 수 없어요. 연결 종료 감지에는 시간이 걸릴 수 있어요.</p>
+            <p>메시지는 이 탭의 메모리에만 두고 앱의 DB·브라우저 저장소에 기록하지 않아요. ‘전달됨’은 상대 앱에 도착했다는 뜻이며 읽음 표시는 아니에요.</p>
+            <p>초대 링크에는 비밀 키가 포함돼요. 링크를 가진 사람이 참여할 수 있으며 닉네임은 신원 인증이 아니에요. 9시간 만료는 각 브라우저에서 적용해요.</p>
+            <p>연결에 PeerJS Cloud와 Google STUN을 사용하며 IP·접속 정보가 남을 수 있어요. 회사 기기의 기록이나 상대방의 복사본까지 지우거나 숨기는 기능은 아니에요.</p>
+          </div>
+          <DialogClose asChild><Button variant="outline" className="help-close">닫기</Button></DialogClose>
+        </DialogContent>
+      </Dialog>
     </header>
-    {!room ? <section className="welcome-layout">
-      <div className="welcome-copy">
-        <span className="eyebrow">JUST A LINK. JUST US.</span>
-        <h1>가볍게 만나고,<br /><span>함께 있을 때 이야기해요.</span></h1>
-        <p className="lead">가입 없이 닉네임 하나로.<br />둘 다 접속해 있을 때, 대화가 시작돼요.</p>
-        <div className="welcome-facts"><span><Clock3 size={18} /> 최대 9시간</span><span><ShieldCheck size={18} /> 메시지 암호화</span></div>
-        <div className="small-note"><span className="note-line" />새로고침하거나 나가면, 대화는 다시 불러올 수 없어요.</div>
-      </div>
+    {!room ? <section className="entry-layout" aria-labelledby="entry-title">
       <div className="entry-card">
-        <div className="entry-icon"><MessageCircle size={28} /></div>
-        <h2>{entry.invite ? "초대받은 방에 들어가기" : "우리만의 대화 시작하기"}</h2>
-        <p>{entry.invite ? "방을 만든 사람이 창을 열어 둔 상태에서 입장해 주세요." : "방을 만들고, 함께할 한 사람에게 링크를 보내세요."}</p>
+        <h1 id="entry-title">{entry.invite ? "입장" : "새 방"}</h1>
         <form onSubmit={event => { event.preventDefault(); enterRoom(); }}>
           <label htmlFor="nickname">닉네임</label>
-          <Input id="nickname" className="name-input" autoComplete="off" spellCheck={false} maxLength={MAX_NICKNAME_CHARS} value={nickname} onChange={event => setNickname(event.target.value)} placeholder="어떤 이름으로 이야기할까요?" required />
-          <div className="field-hint">최대 20자 · 연결된 상대에게만 보여요</div>
-          <Button className="primary-action" type="submit" disabled={!nickname.trim() || !!entry.error}>{entry.invite ? "대화방 입장하기" : "새 대화방 만들기"}<ArrowRight size={18} /></Button>
+          <Input id="nickname" className="name-input" autoComplete="off" spellCheck={false} maxLength={MAX_NICKNAME_CHARS} value={nickname} onChange={event => setNickname(event.target.value)} placeholder="20자 이내" required />
+          <Button className="primary-action" type="submit" disabled={!nickname.trim() || !!entry.error}>{entry.invite ? "입장하기" : "방 만들기"}</Button>
         </form>
         {(error || entry.error) && <p className="error" role="alert">{error || entry.error}</p>}
         {notice && <p className="notice" role="status">{notice}</p>}
-        {(entry.invite || entry.error) && <Button variant="ghost" className="new-room-link" onClick={() => { setEntry({ invite: null, error: "" }); setError(""); }}>새 방을 만들래요</Button>}
-        <div className="entry-footer"><Link2 size={15} /><span>두 사람 전용 · 대화 서버에 저장하지 않아요.<br />초대 링크를 가진 사람이 참여할 수 있어요.</span></div>
+        {(entry.invite || entry.error) && <Button variant="ghost" className="new-room-link" onClick={() => { setEntry({ invite: null, error: "" }); setError(""); }}>새 방 만들기</Button>}
+        <p className="entry-hint">{entry.invite ? "방을 만든 사람이 창을 열어 두어야 해요." : "방을 만든 뒤 초대 링크를 공유하세요."}</p>
       </div>
-    </section> : <section className="chat-layout">
-      <aside className="room-sidebar">
-        <span className="eyebrow">OUR LITTLE ROOM</span>
-        <h1>함께 있는<br />이 시간.</h1>
-        <div className="expiry-card"><span><Clock3 size={16} /> 방 만료까지</span><strong>{timeLabel(remaining)}</strong><p>최대 9시간 동안 열려 있어요.<br />누군가 나가거나 연결이 끊기면 더 일찍 끝나요.</p></div>
-        {room.role === "host" && <Button variant="outline" className="copy-button" disabled={status === "preparing" || status === "connected"} onClick={() => void copyLink()}>{copied ? <Check /> : <Copy />}{copied ? "초대 링크 복사됨" : "초대 링크 복사"}</Button>}
-        {copyFallback && status !== "connected" && <div className="manual-copy"><label htmlFor="invite-link">링크를 선택해서 복사해 주세요</label><Input id="invite-link" readOnly value={copyFallback} onFocus={e => e.target.select()} /></div>}
-        <p className="sidebar-note">이 창을 열어 두세요. 새로고침하면 대화가 끝나요. 링크에는 입장용 비밀 키가 들어 있어요.</p>
-        <Button variant="ghost" className="leave-button" onClick={() => end()}><LogOut /> 방 나가기</Button>
-      </aside>
-      <div className="chat-panel">
-        <div className="chat-header"><div><h2>{remoteName ? `${remoteName} 님과의 대화` : "오늘의 대화"}</h2><span className="nickname-tag">{room.nickname} 님으로 참여 중</span></div><span role="status" className={`connection-state ${status === "connected" ? "online" : ""}`}><i />{labels[status]}</span></div>
-        <div className="message-list" ref={scrollBox} role="log" aria-label="대화 내용" aria-live="polite" aria-relevant="additions" onScroll={() => { const box = scrollBox.current; if (box) stayAtBottom.current = box.scrollHeight - box.scrollTop - box.clientHeight < 100; }}>
-          <div className="chat-start"><LockKeyhole size={14} /> 메시지는 두 브라우저 사이에서 암호화돼요</div>
-          {messages.length === 0 && <div className="empty-chat"><span>{status === "connecting" || status === "authenticating" || status === "preparing" ? <LoaderCircle className="spin" size={32} /> : <MessageCircle size={32} />}</span><h3>{status === "connected" ? "첫 이야기를 건네보세요." : "함께할 사람을 기다려요."}</h3><p>{status === "connected" ? "연결이 끝나면 이전 대화는 복원되지 않아요." : room.role === "host" ? "초대 링크를 공유하고 이 창을 열어 두세요." : "방을 만든 사람과 직접 연결하고 있어요."}</p></div>}
-          {messages.map(message => <article className={`message ${message.mine ? "mine" : ""}`} key={message.id}>
-            <span className="message-author">{message.nickname}{message.mine ? " · 나" : ""}</span>
-            <div className="message-bubble">{message.text}</div>
-            <time dateTime={new Date(message.time).toISOString()}>{new Date(message.time).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false })}{message.mine && ` · ${message.delivered ? "전달됨" : unconfirmed.has(message.id) ? "전달 확인 안 됨" : "전달 중"}`}</time>
-          </article>)}
+    </section> : <section className="chat-panel" aria-label="대화방">
+      <header className="chat-header">
+        <div className="chat-toolbar">
+          <div className="room-identity">
+            <h1 title={remoteName || "연결 대기"}>{remoteName || "연결 대기"}</h1>
+            <span className="nickname-tag" title={room.nickname}>나: {room.nickname}</span>
+          </div>
+          <div className="room-actions">
+            {room.role === "host" && status !== "connected" && <Button variant="outline" className="tool-button" disabled={status === "preparing"} aria-label={copied ? "초대 링크 다시 복사" : "초대 링크 복사"} title="초대 링크 복사" onClick={() => void copyLink()}>{copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}{copied ? "복사됨" : "링크"}</Button>}
+            <Button variant="ghost" className="tool-button" onClick={() => end()} aria-label="방 나가기" title="방 나가기"><LogOut aria-hidden="true" />나가기</Button>
+          </div>
         </div>
-        <form className="composer" onSubmit={event => { event.preventDefault(); void sendMessage(); }}>
-          {error && <div className="error" role="alert">{error}</div>}
-          <div className="compose-row"><Textarea aria-label="메시지" autoComplete="off" spellCheck={false} placeholder={status === "connected" ? "메시지를 입력하세요" : "상대방이 연결되면 메시지를 보낼 수 있어요"} maxLength={MAX_MESSAGE_CHARS} value={draft} disabled={sending || status !== "connected"} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void sendMessage(); } }} /><Button type="submit" className="send-button" aria-label="메시지 보내기" disabled={sending || status !== "connected" || !draft.trim()}>{sending ? <LoaderCircle className="spin" /> : <Send size={19} />}</Button></div>
-          <div className="composer-hint"><span>Enter 전송 · Shift + Enter 줄바꿈</span><span>{draft.length.toLocaleString()} / 2,000</span></div>
-        </form>
+        <div className="room-meta">
+          <span role="status" className={`connection-state ${status === "connected" ? "online" : ""}`}><i aria-hidden="true" />{labels[status]}</span>
+          <span className="room-timer" role="timer" aria-label={`방 만료까지 ${timeLabel(remaining)}`} title="방 만료까지 남은 시간"><Clock3 size={13} aria-hidden="true" />{timeLabel(remaining)}</span>
+        </div>
+      </header>
+      {copyFallback && status !== "connected" && <div className="manual-copy"><label htmlFor="invite-link">링크를 선택해 복사하세요</label><Input id="invite-link" readOnly value={copyFallback} onFocus={e => e.target.select()} /></div>}
+      <div className="message-list" ref={scrollBox} tabIndex={0} role="log" aria-label="대화 내용" aria-live="polite" aria-relevant="additions" onScroll={() => { const box = scrollBox.current; if (box) stayAtBottom.current = box.scrollHeight - box.scrollTop - box.clientHeight < 100; }}>
+        {messages.length === 0 && <div className="empty-chat">{status === "connecting" || status === "authenticating" || status === "preparing" ? <LoaderCircle className="spin" size={18} aria-hidden="true" /> : null}<p>{status === "connected" ? "메시지를 입력하세요." : room.role === "host" ? "링크를 공유하고 기다려 주세요." : "연결하고 있어요."}</p></div>}
+        {messages.map(message => <article className={`message ${message.mine ? "mine" : ""}`} key={message.id}>
+          <span className="message-author">{message.nickname}{message.mine ? " · 나" : ""}</span>
+          <div className="message-bubble">{message.text}</div>
+          <time dateTime={new Date(message.time).toISOString()}>{new Date(message.time).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false })}{message.mine && ` · ${message.delivered ? "전달됨" : unconfirmed.has(message.id) ? "전달 확인 안 됨" : "전달 중"}`}</time>
+        </article>)}
       </div>
+      <form className="composer" onSubmit={event => { event.preventDefault(); void sendMessage(); }}>
+        {error && <div className="error" role="alert" tabIndex={0}>{error}</div>}
+        <div className="compose-row"><Textarea aria-label="메시지" autoComplete="off" spellCheck={false} placeholder={status === "connected" ? "메시지 입력" : "연결 대기 중"} maxLength={MAX_MESSAGE_CHARS} value={draft} readOnly={sending} disabled={status !== "connected"} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void sendMessage(); } }} /><Button type="submit" className="send-button" aria-label="메시지 보내기" disabled={sending || status !== "connected" || !draft.trim()}>{sending ? <LoaderCircle className="spin" aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}</Button></div>
+        <div className="composer-hint"><span>Enter 전송 · Shift+Enter 줄바꿈</span><span>{draft.length.toLocaleString()}/2,000</span></div>
+      </form>
     </section>}
-    <footer className="site-footer"><span>one-chat · a little room for today</span><details><summary>연결과 개인정보 안내</summary><div>메시지는 이 탭의 메모리에만 두며 앱의 DB·브라우저 저장소에 기록하지 않아요. 나가기·새로고침·연결 종료 시 화면의 대화가 비워져요. 연결 종료 감지에는 시간이 걸릴 수 있어요. 연결 중에는 PeerJS Cloud와 Google STUN을 사용하며, 서비스와 네트워크에 IP·접속 정보가 남을 수 있어요. 회사 기기의 기록이나 상대방의 복사본까지 지우는 기능은 아니에요. 닉네임은 신원 인증이 아니며, 9시간 만료는 각 브라우저에서 적용해요.</div></details></footer>
   </main>;
 }
