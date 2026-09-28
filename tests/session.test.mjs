@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
+import { STICKERS, getSticker, stickerMessage } from "../lib/stickers.ts";
 import { SecureSession } from "../lib/secure-session.ts";
 import { EMPTY_TRANSCRIPT, transcriptReducer } from "../lib/transcript.ts";
 import { createInvite, inviteHash, parseInvite, randomPeerId, randomToken, ROOM_TTL_MS, MAX_MESSAGES, MAX_FRAME_CHARS } from "../lib/protocol.ts";
@@ -172,4 +173,33 @@ test("automatic heartbeats keep the session open during a ten-minute pause in hu
   assert.equal(p.hostMessages.length + p.guestMessages.length, 0);
   await p.host.sendMessage("다시 이어서"); await until(() => p.delivered.length === 1);
   assert.equal(p.guestMessages[0].text, "다시 이어서"); assert.deepEqual(p.closed, []);
+});
+
+test("stickers share encrypted delivery, text ordering and the combined 50-message cap", async () => {
+  let hostView = EMPTY_TRANSCRIPT, guestView = EMPTY_TRANSCRIPT, delivered = 0;
+  const p = pair({
+    host: {
+      onMessage: message => { hostView = transcriptReducer(hostView, { type: "append", message }); },
+      onDelivered: id => { hostView = transcriptReducer(hostView, { type: "delivered", id }); delivered++; },
+    },
+    guest: {
+      onMessage: message => { guestView = transcriptReducer(guestView, { type: "append", message }); },
+      onDelivered: id => { guestView = transcriptReducer(guestView, { type: "delivered", id }); delivered++; },
+    },
+  });
+  await ready(p);
+  const texts = Array.from({ length: 60 }, (_, i) => i % 3 === 0 ? `text-${i}` : stickerMessage(STICKERS[i % STICKERS.length]));
+  for (const [index, text] of texts.entries()) {
+    await (index % 2 ? p.host : p.guest).sendMessage(text);
+    await until(() => delivered === index + 1);
+  }
+  for (const view of [hostView, guestView]) {
+    assert.deepEqual(view.messages.map(message => message.text), texts.slice(-50));
+    assert.equal(view.trimmedCount, 10);
+    assert.ok(view.messages.every(message => message.delivery === "delivered"));
+    assert.ok(view.messages.some(message => getSticker(message.text)));
+  }
+  for (const sticker of STICKERS) assert.equal(JSON.stringify(p.trace).includes(sticker.id), false);
+  assert.equal(p.host.ready && p.guest.ready, true);
+  assert.deepEqual(p.closed, []);
 });

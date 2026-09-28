@@ -1,15 +1,18 @@
 import { createRef, memo, PureComponent } from "react";
 import { LoaderCircle } from "lucide-react";
+import { StickerImage } from "@/components/chat/sticker-image";
+import { getSticker } from "@/lib/stickers";
 import type { ChatStatus } from "@/lib/peer-chat";
 import type { Role } from "@/lib/protocol";
 import type { DisplayMessage, TranscriptState } from "@/lib/transcript";
 interface TranscriptProps { history: TranscriptState; status: ChatStatus; role: Role }
 type ScrollSnapshot = { bottom: true } | { bottom: false; key: string | null; offset: number } | null;
 const MessageRow = memo(function MessageRow({ message }: { message: DisplayMessage }) {
+  const sticker = getSticker(message.text);
   const delivery = message.delivery === "delivered" ? "전달됨" : message.delivery === "unconfirmed" ? "전달 확인 안 됨" : "전달 중";
   return <article className={`message ${message.mine ? "mine" : ""}`} data-message-key={message.key}>
     <span className="message-author">{message.nickname}{message.mine ? " · 나" : ""}</span>
-    <div className="message-bubble">{message.text}</div>
+    <div className={`message-bubble${sticker ? " sticker-bubble" : ""}`}>{sticker ? <StickerImage sticker={sticker} /> : message.text}</div>
     <time dateTime={message.isoTime}>{message.timeLabel}{message.mine && ` · ${delivery}`}</time>
   </article>;
 });
