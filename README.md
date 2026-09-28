@@ -32,11 +32,11 @@ npm run dev
 프로덕션 빌드의 로컬 확인:
 
 ```sh
-npm start -- --port 8788 --test-scheduled
+npm start -- --port 8788
 node --experimental-strip-types tests/http-smoke.mjs http://localhost:8788
 ```
 
-로컬 Cron 핸들러는 `http://localhost:8788/__scheduled`를 호출해 확인합니다. 로컬 개발 서버에는 실제 매분 Cron 스케줄러가 없으며, 배포 시 Worker의 매분 Cron 트리거가 활성화되어야 합니다. 방 생성과 만료 접근 시에도 정리를 수행합니다.
+빌드 후 `npm run test:cron`으로 Cron 핸들러를 확인합니다. 이 명령은 임시 독립 D1에 만료된 테스트 데이터를 넣고 실제 빌드 Worker의 scheduled 핸들러가 방·참가자·메시지를 삭제하는지 검증합니다. 정적 파일 프록시를 거치는 일반 로컬 서버의 `/__scheduled`는 이 구성에서 동작하지 않습니다. 로컬 개발 서버에는 실제 매분 Cron 스케줄러가 없으며, 배포 시 Worker의 매분 Cron 트리거가 활성화되어야 합니다. 방 생성과 만료 접근 시에도 정리를 수행합니다.
 
 ## 검증
 
@@ -45,11 +45,12 @@ npm run typecheck
 npm run lint
 npm test
 npm run build
+npm run test:cron
 ```
 
 테스트는 SQLite 기반 실제 SQL 실행, 권한 분리, 정확한 만료 경계, 지연된 쓰기의 만료 검사, 동시 재전송 중복 방지, 변조 탐지, 최대 메시지 크기 및 동기화 커서를 검증합니다. `http-smoke.mjs`는 실행 중인 로컬 Worker/D1에서 두 참가자의 암호화 대화를 확인합니다. 실제 브라우저 클릭·화면 검증은 별도입니다.
 
-GitHub Actions도 타입 검사·린트·테스트·빌드를 실행합니다. 호스팅 배포는 자동으로 실행하지 않습니다.
+GitHub Actions도 타입 검사·린트·테스트·빌드와 예약된 만료 정리 검증을 실행합니다. 호스팅 배포는 자동으로 실행하지 않습니다.
 
 ## 파일 구조
 
