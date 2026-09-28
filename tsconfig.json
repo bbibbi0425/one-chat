@@ -29,8 +29,10 @@
     },
     "types": [
       "node",
-      "@cloudflare/workers-types"
-    ]
+      "@cloudflare/workers-types",
+      "vite/client"
+    ],
+    "allowImportingTsExtensions": true
   },
   "include": [
     "next-env.d.ts",
