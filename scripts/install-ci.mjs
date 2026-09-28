@@ -41,11 +41,11 @@ try {
   accessSync(
     path.join(
       projectRoot, "node_modules", ".bin",
-      process.platform === "win32" ? "vinext.cmd" : "vinext",
+      process.platform === "win32" ? "vite.cmd" : "vite",
     ),
     process.platform === "win32" ? constants.F_OK : constants.X_OK,
   );
 } catch {
-  console.error("npm ci exited successfully but the local vinext executable is unavailable.");
+  console.error("npm ci exited successfully but the local vite executable is unavailable.");
   process.exitCode = 69;
 }
