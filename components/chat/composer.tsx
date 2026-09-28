@@ -1,4 +1,4 @@
-import { memo, useEffect, useId, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { LoaderCircle, Send, Smile, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,13 +15,25 @@ export const Composer = memo(function Composer({ connected, onSend }: ComposerPr
   const [error, setError] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [selectedSticker, setSelectedSticker] = useState<Sticker | null>(null);
+  const selection = useRef<Sticker | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const focusDraft = useRef(false);
-  const pickerTitle = useId(), pickerHint = useId();
   const sendLock = useRef(false);
   const lifecycle = useRef(0);
   const invalidate = useRef(() => { lifecycle.current++; });
   useEffect(() => { const cancel = invalidate.current; return cancel; }, []);
+  function clearSelection() { selection.current = null; setSelectedSticker(null); }
+  function changePicker(open: boolean) {
+    focusDraft.current = false; clearSelection(); setPickerOpen(open);
+  }
+  function activateSticker(sticker: Sticker) {
+    if (!connected || sendLock.current) return;
+    if (selection.current?.id === sticker.id) {
+      clearSelection(); void send(sticker);
+    } else {
+      selection.current = sticker; setSelectedSticker(sticker);
+    }
+  }
   async function send(sticker?: Sticker) {
     if (!connected || sendLock.current || (!sticker && !draft.trim())) return;
     const generation = lifecycle.current;
@@ -29,7 +41,7 @@ export const Composer = memo(function Composer({ connected, onSend }: ComposerPr
     try {
       await onSend(sticker ? stickerMessage(sticker) : draft);
       if (generation === lifecycle.current) {
-        if (sticker) { setSelectedSticker(null); focusDraft.current = true; setPickerOpen(false); }
+        if (sticker) { clearSelection(); focusDraft.current = true; setPickerOpen(false); }
         else setDraft("");
       }
     } catch (error) {
@@ -41,16 +53,14 @@ export const Composer = memo(function Composer({ connected, onSend }: ComposerPr
   return <form className="composer" onSubmit={event => { event.preventDefault(); void send(); }}>
     {error && !pickerOpen && <div className="error" role="alert" tabIndex={0}>{error}</div>}
     <div className="compose-row">
-      <Popover open={pickerOpen && connected} onOpenChange={open => { focusDraft.current = false; setPickerOpen(open); }}>
+      <Popover open={pickerOpen && connected} onOpenChange={changePicker}>
         <PopoverTrigger asChild><Button type="button" variant="outline" className="sticker-trigger" aria-label="스티커 고르기" title="스티커" disabled={!connected}><Smile size={20} aria-hidden="true" /></Button></PopoverTrigger>
-        <PopoverContent className="sticker-picker" side="top" align="start" sideOffset={8} collisionPadding={8} aria-labelledby={pickerTitle} aria-describedby={pickerHint} onCloseAutoFocus={event => { if (focusDraft.current) { event.preventDefault(); focusDraft.current = false; textarea.current?.focus(); } }}>
-          <div className="sticker-picker-header"><h2 id={pickerTitle}>스티커</h2><Button type="button" variant="ghost" className="sticker-close" aria-label="스티커 닫기" onClick={() => setPickerOpen(false)}><X size={16} aria-hidden="true" /></Button></div>
-          <p id={pickerHint} className="sticker-hint">고른 뒤 보내기를 누르세요.</p>
-          <div className="sticker-options">
-            {STICKERS.map(sticker => <Button key={sticker.id} type="button" variant="ghost" className="sticker-option" aria-label={`${sticker.label} 스티커 선택`} aria-pressed={selectedSticker?.id === sticker.id} disabled={sending || !connected} onClick={() => setSelectedSticker(sticker)}><StickerImage sticker={sticker} decorative /><span>{sticker.label}</span></Button>)}
+        <PopoverContent className="sticker-picker" side="top" align="start" sideOffset={8} collisionPadding={8} aria-label="스티커" onCloseAutoFocus={event => { if (focusDraft.current) { event.preventDefault(); focusDraft.current = false; textarea.current?.focus(); } }}>
+          <div className="sticker-picker-header"><Button type="button" variant="ghost" className="sticker-close" aria-label="스티커 닫기" onClick={() => changePicker(false)}><X size={16} aria-hidden="true" /></Button></div>
+          <div className="sticker-options" aria-busy={sending}>
+            {STICKERS.map(sticker => <Button key={sticker.id} type="button" variant="ghost" className="sticker-option" aria-label={`${sticker.label} 스티커 ${selectedSticker?.id === sticker.id ? "보내기" : "선택"}`} aria-pressed={selectedSticker?.id === sticker.id} disabled={sending || !connected} onKeyDown={event => { if (event.repeat && (event.key === "Enter" || event.key === " ")) event.preventDefault(); }} onClick={() => activateSticker(sticker)}><StickerImage sticker={sticker} decorative /></Button>)}
           </div>
           {error && <div className="error sticker-error" role="alert" tabIndex={0}>{error}</div>}
-          <div className="sticker-picker-footer"><span aria-live="polite">{selectedSticker ? `${selectedSticker.label} 선택됨` : "스티커를 골라 주세요"}</span><Button type="button" disabled={!selectedSticker || sending || !connected} aria-label="선택한 스티커 보내기" onClick={() => { if (selectedSticker) void send(selectedSticker); }}>{sending ? <LoaderCircle className="spin" size={16} aria-hidden="true" /> : <Send size={16} aria-hidden="true" />}보내기</Button></div>
         </PopoverContent>
       </Popover>
       <Textarea ref={textarea} aria-label="메시지" autoComplete="off" spellCheck={false} placeholder={connected ? "메시지 입력" : "연결 대기 중"} maxLength={MAX_MESSAGE_CHARS} value={draft} readOnly={sending} disabled={!connected} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void send(); } }} />

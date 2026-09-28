@@ -181,19 +181,14 @@ button:disabled { cursor: default; }
 
 .sticker-trigger { flex: none; width: 36px; min-width: 36px; height: 42px; padding: 0; border-radius: 8px; color: #627084; }
 .sticker-picker { width: min(280px, calc(100vw - 16px)); max-height: min(380px, var(--radix-popover-content-available-height)); overflow-y: auto; overscroll-behavior: contain; padding: 10px; border-color: #dfe4eb; border-radius: 10px; background: #fff; color: #303b49; animation: none !important; }
-.sticker-picker-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.sticker-picker-header h2 { font-size: .875rem; font-weight: 600; }
+.sticker-picker-header { display: flex; justify-content: flex-end; }
 .sticker-close { width: 32px; height: 32px; padding: 0; }
-.sticker-hint { margin: 0 0 8px; color: #727e8e; font-size: .75rem; }
 .sticker-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
-.sticker-option { display: flex; flex-direction: column; gap: 2px; min-width: 0; height: auto; padding: 5px 2px; border: 1px solid transparent; border-radius: 7px; font-size: .875rem; white-space: normal; }
+.sticker-option { display: flex; min-width: 0; height: auto; padding: 6px; border: 1px solid transparent; border-radius: 7px; user-select: none; touch-action: manipulation; }
 .sticker-option[aria-pressed="true"] { border-color: #71839b; background: #e9eef5; }
 .sticker-art { display: flex; flex: none; align-items: center; justify-content: center; width: 112px; height: 112px; overflow: hidden; }
 .sticker-art img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .sticker-option .sticker-art { width: 60px; height: 60px; max-width: 100%; }
 .sticker-fallback { padding: 4px; color: #627084; font-size: .75rem; text-align: center; white-space: normal; }
 .message-bubble.sticker-bubble { padding: 0; background: transparent; }
-.sticker-picker-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
-.sticker-picker-footer > span { min-width: 0; font-size: .75rem; color: #627084; }
-.sticker-picker-footer > button { flex: none; min-height: 36px; font-size: .875rem; }
 .sticker-error { max-height: 64px; overflow-y: auto; margin-top: 8px; font-size: .875rem; }
