@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import Peer from "peerjs";
-import { Check, Copy, Info, LogOut } from "lucide-react";
+import { Check, Copy, FileText, Info, LogOut, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import noteIcon from "@/assets/note-icon.svg?inline";
 import { Composer } from "@/components/chat/composer";
 import { RoomTimer } from "@/components/chat/room-timer";
 import { Transcript } from "@/components/chat/transcript";
@@ -31,6 +33,7 @@ function readInvite(): { invite: Invite | null; error: string } {
 }
 function stripHash() { window.history.replaceState(null, "", window.location.pathname + window.location.search); }
 export default function Home() {
+  const [noteMode, setNoteMode] = useState(false);
   const [entry, setEntry] = useState(readInvite);
   const [nickname, setNickname] = useState("");
   const [room, setRoom] = useState<RoomView | null>(null);
@@ -43,6 +46,16 @@ export default function Home() {
   const [copyFallback, setCopyFallback] = useState("");
   const active = useRef<PeerChat | null>(null);
   const generation = useRef(0);
+
+  // Presentation only: no storage, navigation or transport effects when switching.
+  useEffect(() => {
+    const previousTitle = document.title;
+    const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    const previousIcon = icon?.getAttribute("href");
+    document.title = noteMode ? "메모" : "one-chat";
+    if (icon) icon.href = noteMode ? noteIcon : `${import.meta.env.BASE_URL}favicon.svg`;
+    return () => { document.title = previousTitle; if (icon && previousIcon != null) icon.setAttribute("href", previousIcon); };
+  }, [noteMode]);
 
   const helpTitle = useRef<HTMLHeadingElement>(null);
   useRoomStatusTool({ joined: !!room, connection: room ? labels[status] : "입장 전", expiresAt: room?.invite.expiresAt ?? null });
@@ -106,12 +119,17 @@ export default function Home() {
     try { await navigator.clipboard.writeText(link); if (generation.current === current) setCopied(true); }
     catch { if (generation.current === current) setCopyFallback(link); }
   }
-  return <main className={`app-shell ${room ? "in-room" : "at-entry"}`}>
+  return <main className={`app-shell ${room ? "in-room" : "at-entry"}`} data-theme={noteMode ? "notes" : "default"}>
     <header className="site-header">
-      <span className="brand">one-chat</span>
+      <span className="brand">{noteMode ? <><FileText size={16} aria-hidden="true" />메모</> : "one-chat"}</span>
+      <div className="site-actions">
+        <ToggleGroup data-theme-switch type="single" value={noteMode ? "notes" : "default"} onValueChange={value => { if (value === "notes" || value === "default") setNoteMode(value === "notes"); }} className="theme-switch" aria-label="화면 테마">
+          <ToggleGroupItem value="default" className="theme-option" aria-label="기본 테마">기본</ToggleGroupItem>
+          <ToggleGroupItem value="notes" className="theme-option" aria-label="메모 테마">메모</ToggleGroupItem>
+        </ToggleGroup>
       <Dialog>
         <DialogTrigger asChild><Button variant="ghost" className="help-button"><Info aria-hidden="true" />안내</Button></DialogTrigger>
-        <DialogContent className="help-dialog" showCloseButton={false} onOpenAutoFocus={event => { event.preventDefault(); helpTitle.current?.focus(); }}>
+        <DialogContent data-theme={noteMode ? "notes" : "default"} className="help-dialog" showCloseButton={false} onOpenAutoFocus={event => { event.preventDefault(); helpTitle.current?.focus(); }}>
           <DialogHeader>
             <DialogTitle ref={helpTitle} tabIndex={-1}>사용 안내</DialogTitle>
             <DialogDescription>두 사람 전용 · 최대 9시간</DialogDescription>
@@ -127,30 +145,31 @@ export default function Home() {
           <DialogClose asChild><Button variant="outline" className="help-close">닫기</Button></DialogClose>
         </DialogContent>
       </Dialog>
+      </div>
     </header>
     {!room ? <section className="entry-layout" aria-labelledby="entry-title">
       <div className="entry-card">
-        <h1 id="entry-title">{entry.invite ? "입장" : "새 방"}</h1>
+        <h1 id="entry-title">{noteMode ? (entry.invite ? "메모 열기" : "새 메모") : (entry.invite ? "입장" : "새 방")}</h1>
         <form onSubmit={event => { event.preventDefault(); enterRoom(); }}>
-          <label htmlFor="nickname">닉네임</label>
+          <label htmlFor="nickname">{noteMode ? "표시 이름" : "닉네임"}</label>
           <Input id="nickname" className="name-input" autoComplete="off" spellCheck={false} maxLength={MAX_NICKNAME_CHARS} value={nickname} onChange={event => setNickname(event.target.value)} placeholder="20자 이내" required />
-          <Button className="primary-action" type="submit" disabled={!nickname.trim() || !!entry.error}>{entry.invite ? "입장하기" : "방 만들기"}</Button>
+          <Button className="primary-action" type="submit" disabled={!nickname.trim() || !!entry.error}>{noteMode ? (entry.invite ? "열기" : "시작") : (entry.invite ? "입장하기" : "방 만들기")}</Button>
         </form>
         {(error || entry.error) && <p className="error" role="alert">{error || entry.error}</p>}
         {notice && <p className="notice" role="status">{notice}</p>}
-        {(entry.invite || entry.error) && <Button variant="ghost" className="new-room-link" onClick={() => { setEntry({ invite: null, error: "" }); setError(""); }}>새 방 만들기</Button>}
-        <p className="entry-hint">{entry.invite ? "방을 만든 사람이 창을 열어 두어야 해요." : "방을 만든 뒤 초대 링크를 공유하세요."}</p>
+        {(entry.invite || entry.error) && <Button variant="ghost" className="new-room-link" onClick={() => { setEntry({ invite: null, error: "" }); setError(""); }}>{noteMode ? "새 메모 시작" : "새 방 만들기"}</Button>}
+        <p className="entry-hint">{entry.invite ? "초대한 사람이 창을 열어 두어야 해요." : noteMode ? "시작한 뒤 링크를 공유하세요." : "방을 만든 뒤 초대 링크를 공유하세요."}</p>
       </div>
     </section> : <section className="chat-panel" aria-label="대화방" key={room.invite.hostId}>
       <header className="chat-header">
         <div className="chat-toolbar">
           <div className="room-identity">
-            <h1 title={remoteName || "연결 대기"}>{remoteName || "연결 대기"}</h1>
-            <span className="nickname-tag" title={room.nickname}>나: {room.nickname}</span>
+            <h1 title={noteMode ? "제목 없는 메모" : remoteName || "연결 대기"}>{noteMode ? "제목 없는 메모" : remoteName || "연결 대기"}</h1>
+            <span className="nickname-tag" title={noteMode ? `${room.nickname}${remoteName ? ` · ${remoteName}` : ""}` : room.nickname}>{noteMode ? `${room.nickname}${remoteName ? ` · ${remoteName}` : ""}` : `나: ${room.nickname}`}</span>
           </div>
           <div className="room-actions">
             {room.role === "host" && status !== "connected" && <Button variant="outline" className="tool-button" disabled={status === "preparing"} aria-label={copied ? "초대 링크 다시 복사" : "초대 링크 복사"} title="초대 링크 복사" onClick={() => void copyLink()}>{copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}{copied ? "복사됨" : "링크"}</Button>}
-            <Button variant="ghost" className="tool-button" onClick={() => end()} aria-label="방 나가기" title="방 나가기"><LogOut aria-hidden="true" />나가기</Button>
+            <Button variant="ghost" className="tool-button" onClick={() => end()} aria-label="방 나가기" title="방 나가기">{noteMode ? <X aria-hidden="true" /> : <LogOut aria-hidden="true" />}{noteMode ? "닫기" : "나가기"}</Button>
           </div>
         </div>
         <div className="room-meta">
@@ -160,8 +179,8 @@ export default function Home() {
         </div>
       </header>
       {copyFallback && status !== "connected" && <div className="manual-copy"><label htmlFor="invite-link">링크를 선택해 복사하세요</label><Input id="invite-link" readOnly value={copyFallback} onFocus={e => e.target.select()} /></div>}
-      <Transcript history={history} status={status} role={room.role} />
-      <Composer connected={status === "connected"} onSend={sendMessage} />
+      <Transcript history={history} status={status} role={room.role} noteMode={noteMode} />
+      <Composer connected={status === "connected"} onSend={sendMessage} noteMode={noteMode} />
     </section>}
   </main>;
 }
