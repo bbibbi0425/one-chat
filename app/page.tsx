@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState, type CSSProperties } from "react";
 import Peer from "peerjs";
 import { Check, Copy, FileText, Info, LogOut, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { Composer } from "@/components/chat/composer";
 import { RoomTimer } from "@/components/chat/room-timer";
 import { Transcript } from "@/components/chat/transcript";
 import { WindowOptions } from "@/components/chat/window-options";
-import { readWindowMode } from "@/lib/window-mode";
+import { MIN_FONT_SIZE, MAX_FONT_SIZE, readWindowMode } from "@/lib/window-mode";
 import { EMPTY_TRANSCRIPT, MAX_RETAINED_MESSAGES, transcriptReducer } from "@/lib/transcript";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { PeerChat } from "@/lib/peer-chat";
@@ -36,6 +36,7 @@ function readInvite(): { invite: Invite | null; error: string } {
 function stripHash() { window.history.replaceState(null, "", window.location.pathname + window.location.search); }
 export default function Home() {
   const [noteMode, setNoteMode] = useState(() => readWindowMode(window.location.search).noteMode);
+  const [fontSize, setFontSize] = useState(() => readWindowMode(window.location.search).fontSize);
   const [entry, setEntry] = useState(readInvite);
   const [nickname, setNickname] = useState("");
   const [room, setRoom] = useState<RoomView | null>(null);
@@ -121,7 +122,7 @@ export default function Home() {
     try { await navigator.clipboard.writeText(link); if (generation.current === current) setCopied(true); }
     catch { if (generation.current === current) setCopyFallback(link); }
   }
-  return <main className={`app-shell ${room ? "in-room" : "at-entry"}`} data-theme={noteMode ? "notes" : "default"}>
+  return <main className={`app-shell ${room ? "in-room" : "at-entry"}`} data-theme={noteMode ? "notes" : "default"} style={{ "--chat-font-size": `${fontSize / 16}rem` } as CSSProperties}>
     <header className="site-header">
       <span className="brand">{noteMode ? <><FileText size={16} aria-hidden="true" />메모</> : "one-chat"}</span>
       <div className="site-actions">
@@ -129,7 +130,12 @@ export default function Home() {
           <ToggleGroupItem value="default" className="theme-option" aria-label="기본 테마">기본</ToggleGroupItem>
           <ToggleGroupItem value="notes" className="theme-option" aria-label="메모 테마">메모</ToggleGroupItem>
         </ToggleGroup>
-        <WindowOptions joined={!!room} invite={entry.invite} inviteError={!!entry.error} noteMode={noteMode} />
+        <div className="font-size-controls" data-font-size-switch role="group" aria-label="글자 크기">
+          <Button type="button" variant="ghost" className="font-size-button" aria-label="글자 작게" title="글자 작게" disabled={fontSize <= MIN_FONT_SIZE} onClick={() => setFontSize(size => Math.max(MIN_FONT_SIZE, size - 1))}>A−</Button>
+          <output className="font-size-value" aria-label={`글자 크기 ${fontSize}픽셀`} aria-live="polite" aria-atomic="true">{fontSize}</output>
+          <Button type="button" variant="ghost" className="font-size-button" aria-label="글자 크게" title="글자 크게" disabled={fontSize >= MAX_FONT_SIZE} onClick={() => setFontSize(size => Math.min(MAX_FONT_SIZE, size + 1))}>A+</Button>
+        </div>
+        <WindowOptions joined={!!room} invite={entry.invite} inviteError={!!entry.error} noteMode={noteMode} fontSize={fontSize} />
       <Dialog>
         <DialogTrigger asChild><Button variant="ghost" className="help-button"><Info aria-hidden="true" />안내</Button></DialogTrigger>
         <DialogContent data-theme={noteMode ? "notes" : "default"} className="help-dialog" showCloseButton={false} onOpenAutoFocus={event => { event.preventDefault(); helpTitle.current?.focus(); }}>
@@ -182,7 +188,7 @@ export default function Home() {
         </div>
       </header>
       {copyFallback && status !== "connected" && <div className="manual-copy"><label htmlFor="invite-link">링크를 선택해 복사하세요</label><Input id="invite-link" readOnly value={copyFallback} onFocus={e => e.target.select()} /></div>}
-      <Transcript history={history} status={status} role={room.role} noteMode={noteMode} />
+      <Transcript history={history} status={status} role={room.role} noteMode={noteMode} fontSize={fontSize} />
       <Composer connected={status === "connected"} onSend={sendMessage} noteMode={noteMode} />
     </section>}
   </main>;

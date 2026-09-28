@@ -5,7 +5,7 @@ import { getSticker } from "@/lib/stickers";
 import type { ChatStatus } from "@/lib/peer-chat";
 import type { Role } from "@/lib/protocol";
 import type { DisplayMessage, TranscriptState } from "@/lib/transcript";
-interface TranscriptProps { noteMode: boolean; history: TranscriptState; status: ChatStatus; role: Role }
+interface TranscriptProps { noteMode: boolean; fontSize: number; history: TranscriptState; status: ChatStatus; role: Role }
 type ScrollSnapshot = { bottom: true } | { bottom: false; key: string | null; offset: number } | null;
 const MessageRow = memo(function MessageRow({ message }: { message: DisplayMessage }) {
   const sticker = getSticker(message.text);
@@ -26,10 +26,10 @@ export class Transcript extends PureComponent<TranscriptProps, Record<string, ne
   }
   getSnapshotBeforeUpdate(previous: TranscriptProps): ScrollSnapshot {
     const box = this.scrollBox.current;
-    const themeChanged = previous.noteMode !== this.props.noteMode;
-    if (!box || (previous.history === this.props.history && !themeChanged)) return null;
+    const layoutChanged = previous.noteMode !== this.props.noteMode || previous.fontSize !== this.props.fontSize;
+    if (!box || (previous.history === this.props.history && !layoutChanged)) return null;
     if (box.scrollHeight - box.scrollTop - box.clientHeight < 60 || previous.history.sentRevision !== this.props.history.sentRevision) return { bottom: true };
-    if (previous.history.trimmedCount === this.props.history.trimmedCount && !themeChanged) return null;
+    if (previous.history.trimmedCount === this.props.history.trimmedCount && !layoutChanged) return null;
     const retained = new Set(this.props.history.messages.map(message => message.key));
     const viewport = box.getBoundingClientRect();
     for (const row of box.querySelectorAll<HTMLElement>("[data-message-key]")) {
@@ -46,7 +46,7 @@ export class Transcript extends PureComponent<TranscriptProps, Record<string, ne
     const anchor = Array.from(box.querySelectorAll<HTMLElement>("[data-message-key]")).find(row => row.dataset.messageKey === snapshot.key);
     if (anchor) {
       const bounds = anchor.getBoundingClientRect();
-      // A narrower bubble can become a much shorter note row. Keep it in view.
+      // Theme or font changes can shorten the anchor row. Keep it in view.
       const offset = Math.max(snapshot.offset, -Math.max(0, bounds.height - 32));
       box.scrollTop += bounds.top - box.getBoundingClientRect().top - offset;
     } else box.scrollTop = 0;

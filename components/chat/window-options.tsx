@@ -5,9 +5,9 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, Di
 import type { Invite } from "@/lib/protocol";
 import { popupUrl, readWindowMode } from "@/lib/window-mode";
 
-type Props = { joined: boolean; invite: Invite | null; inviteError: boolean; noteMode: boolean };
+type Props = { joined: boolean; invite: Invite | null; inviteError: boolean; noteMode: boolean; fontSize: number };
 
-export function WindowOptions({ joined, invite, inviteError, noteMode }: Props) {
+export function WindowOptions({ joined, invite, inviteError, noteMode, fontSize }: Props) {
   const [compact] = useState(() => readWindowMode(window.location.search).compact);
   const [error, setError] = useState("");
   const [opened, setOpened] = useState(false);
@@ -26,7 +26,7 @@ export function WindowOptions({ joined, invite, inviteError, noteMode }: Props) 
     setOpened(false);
     let next: Window | null = null;
     try {
-      const url = popupUrl(window.location.href, invite, noteMode);
+      const url = popupUrl(window.location.href, invite, noteMode, fontSize);
       // Keep a handle for blocker detection; sever opener before loading the app.
       next = window.open("about:blank", "_blank", "popup=yes,width=400,height=560,resizable=yes,scrollbars=yes");
       if (!next) {
@@ -56,7 +56,7 @@ export function WindowOptions({ joined, invite, inviteError, noteMode }: Props) 
         <h2 id="popup-heading">작은 팝업</h2>
         <p>작게 열고 크기를 자유롭게 조절해요. 브라우저에 따라 주소 표시줄이 남거나 새 탭으로 열릴 수 있어요.</p>
         <Button variant="outline" className="window-launch" onClick={openPopup} disabled={joined || compact || inviteError}>작은 창 열기</Button>
-        <p className="window-hint">{joined ? "대화 중에는 옮길 수 없어요. 다음 대화를 시작하기 전에 열어 주세요." : compact ? "이미 작은 창으로 열었어요. 이 창에서 계속 사용하세요." : inviteError ? "올바른 초대 링크를 연 뒤 다시 시도해 주세요." : "현재 테마와 초대 링크가 새 창에 이어져요. 이름은 새 창에서 입력하세요."}</p>
+        <p className="window-hint">{joined ? "대화 중에는 옮길 수 없어요. 다음 대화를 시작하기 전에 열어 주세요." : compact ? "이미 작은 창으로 열었어요. 이 창에서 계속 사용하세요." : inviteError ? "올바른 초대 링크를 연 뒤 다시 시도해 주세요." : "현재 테마·글자 크기·초대 링크가 새 창에 이어져요. 이름은 새 창에서 입력하세요."}</p>
         {opened && !joined && <p className="notice" role="status">새 창에서 시작하세요. 다시 누르면 먼저 연 창으로 돌아가요. 이 창은 닫아도 돼요.</p>}
         {error && <p className="error" role="alert">{error}</p>}
       </section>
