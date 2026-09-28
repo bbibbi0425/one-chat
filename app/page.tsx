@@ -8,6 +8,8 @@ import noteIcon from "@/assets/note-icon.svg?inline";
 import { Composer } from "@/components/chat/composer";
 import { RoomTimer } from "@/components/chat/room-timer";
 import { Transcript } from "@/components/chat/transcript";
+import { WindowOptions } from "@/components/chat/window-options";
+import { readWindowMode } from "@/lib/window-mode";
 import { EMPTY_TRANSCRIPT, MAX_RETAINED_MESSAGES, transcriptReducer } from "@/lib/transcript";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { PeerChat } from "@/lib/peer-chat";
@@ -33,7 +35,7 @@ function readInvite(): { invite: Invite | null; error: string } {
 }
 function stripHash() { window.history.replaceState(null, "", window.location.pathname + window.location.search); }
 export default function Home() {
-  const [noteMode, setNoteMode] = useState(false);
+  const [noteMode, setNoteMode] = useState(() => readWindowMode(window.location.search).noteMode);
   const [entry, setEntry] = useState(readInvite);
   const [nickname, setNickname] = useState("");
   const [room, setRoom] = useState<RoomView | null>(null);
@@ -127,6 +129,7 @@ export default function Home() {
           <ToggleGroupItem value="default" className="theme-option" aria-label="기본 테마">기본</ToggleGroupItem>
           <ToggleGroupItem value="notes" className="theme-option" aria-label="메모 테마">메모</ToggleGroupItem>
         </ToggleGroup>
+        <WindowOptions joined={!!room} invite={entry.invite} inviteError={!!entry.error} noteMode={noteMode} />
       <Dialog>
         <DialogTrigger asChild><Button variant="ghost" className="help-button"><Info aria-hidden="true" />안내</Button></DialogTrigger>
         <DialogContent data-theme={noteMode ? "notes" : "default"} className="help-dialog" showCloseButton={false} onOpenAutoFocus={event => { event.preventDefault(); helpTitle.current?.focus(); }}>
