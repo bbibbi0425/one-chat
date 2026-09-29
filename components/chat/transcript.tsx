@@ -5,7 +5,7 @@ import { getSticker } from "@/lib/stickers";
 import type { ChatStatus } from "@/lib/peer-chat";
 import type { Role } from "@/lib/protocol";
 import type { DisplayMessage, TranscriptState } from "@/lib/transcript";
-interface TranscriptProps { noteMode: boolean; fontSize: number; history: TranscriptState; status: ChatStatus; role: Role }
+interface TranscriptProps { noteMode: boolean; fontSize: number; codeRoom: boolean; history: TranscriptState; status: ChatStatus; role: Role }
 type ScrollSnapshot = { bottom: true } | { bottom: false; key: string | null; offset: number } | null;
 const MessageRow = memo(function MessageRow({ message }: { message: DisplayMessage }) {
   const sticker = getSticker(message.text);
@@ -52,10 +52,10 @@ export class Transcript extends PureComponent<TranscriptProps, Record<string, ne
     } else box.scrollTop = 0;
   }
   render() {
-    const { history, status, role, noteMode } = this.props;
+    const { history, status, role, noteMode, codeRoom } = this.props;
     const connecting = status === "connecting" || status === "authenticating" || status === "preparing";
     return <div className="message-list" ref={this.scrollBox} tabIndex={0} role="log" aria-label="대화 내용" aria-live="polite" aria-relevant="additions">
-      {history.messages.length === 0 && <div className="empty-chat">{connecting ? <LoaderCircle className="spin" size={18} aria-hidden="true" /> : null}<p>{status === "connected" ? (noteMode ? "내용을 입력하세요." : "메시지를 입력하세요.") : role === "host" ? "링크를 공유하고 기다려 주세요." : "연결하고 있어요."}</p></div>}
+      {history.messages.length === 0 && <div className="empty-chat">{connecting ? <LoaderCircle className="spin" size={18} aria-hidden="true" /> : null}<p>{status === "connected" ? (noteMode ? "내용을 입력하세요." : "메시지를 입력하세요.") : role === "host" ? (codeRoom ? "상대방이 같은 코드로 입장하기를 기다리고 있어요." : "링크를 공유하고 기다려 주세요.") : "연결하고 있어요."}</p></div>}
       {history.messages.map(message => <MessageRow key={message.key} message={message} />)}
     </div>;
   }

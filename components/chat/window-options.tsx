@@ -56,7 +56,7 @@ export function WindowOptions({ joined, invite, inviteError, noteMode, fontSize 
         <h2 id="popup-heading">작은 팝업</h2>
         <p>작게 열고 크기를 자유롭게 조절해요. 브라우저에 따라 주소 표시줄이 남거나 새 탭으로 열릴 수 있어요.</p>
         <Button variant="outline" className="window-launch" onClick={openPopup} disabled={joined || compact || inviteError}>작은 창 열기</Button>
-        <p className="window-hint">{joined ? "대화 중에는 옮길 수 없어요. 다음 대화를 시작하기 전에 열어 주세요." : compact ? "이미 작은 창으로 열었어요. 이 창에서 계속 사용하세요." : inviteError ? "올바른 초대 링크를 연 뒤 다시 시도해 주세요." : "현재 테마·글자 크기·초대 링크가 새 창에 이어져요. 이름은 새 창에서 입력하세요."}</p>
+        <p className="window-hint">{joined ? "대화 중에는 옮길 수 없어요. 다음 대화를 시작하기 전에 열어 주세요." : compact ? "이미 작은 창으로 열었어요. 이 창에서 계속 사용하세요." : inviteError ? "올바른 초대 링크를 연 뒤 다시 시도해 주세요." : invite ? "현재 테마·글자 크기·초대 링크가 새 창에 이어져요. 이름은 새 창에서 입력하세요." : "현재 테마와 글자 크기가 이어져요. 이름과 입장 코드는 새 창에서 입력하세요."}</p>
         {opened && !joined && <p className="notice" role="status">새 창에서 시작하세요. 다시 누르면 먼저 연 창으로 돌아가요. 이 창은 닫아도 돼요.</p>}
         {error && <p className="error" role="alert">{error}</p>}
       </section>
@@ -68,7 +68,7 @@ export function WindowOptions({ joined, invite, inviteError, noteMode, fontSize 
           <li><strong>⋮ → 전송, 저장 및 공유 → 페이지를 앱으로 설치…</strong>를 선택해요.</li>
           <li>설치된 앱 창에서 새 대화를 시작해요.</li>
         </ol>
-        <p className="window-hint">새 대화를 시작하기 전에 설치하세요. 앱 창에서 방을 만든 뒤 링크를 공유하면 돼요. 초대받은 링크는 일반 창이나 작은 팝업에서 열어 주세요. 시크릿 모드나 회사 설정에 따라 설치 메뉴가 없을 수 있어요.</p>
+        <p className="window-hint">새 대화를 시작하기 전에 설치하세요. 둘 다 앱 창에서 같은 입장 코드를 입력하면 돼요. 이전 초대 링크는 일반 창이나 작은 팝업에서 열어 주세요. 시크릿 모드나 회사 설정에 따라 설치 메뉴가 없을 수 있어요.</p>
       </section>
       <DialogClose asChild><Button variant="outline" className="help-close">현재 창에서 계속</Button></DialogClose>
     </DialogContent>

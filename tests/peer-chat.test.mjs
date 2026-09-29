@@ -62,7 +62,7 @@ test("leaving closes both sides, clears view data and makes the old invite unava
 test("pending service connection and waiting host have bounded deadlines", t => {
   const n = network(); t.after(n.close); let mono = 0, wall = Date.now(); const invite = createInvite(wall);
   const { chat, state } = n.participant("host", invite, { now: () => wall, monotonic: () => mono });
-  mono = 30000; chat.tick(); assert.deepEqual(state.ended, ["CONNECTION_TIMEOUT"]);
+  mono = 30000; chat.tick(); assert.deepEqual(state.ended, ["SIGNAL_TIMEOUT"]);
   const next = n.participant("host", invite, { now: () => wall, monotonic: () => mono });
   mono += ROOM_TTL_MS; wall -= ROOM_TTL_MS; next.chat.tick(); assert.deepEqual(next.state.ended, ["ROOM_EXPIRED"]);
 });
