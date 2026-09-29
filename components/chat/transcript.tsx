@@ -2,17 +2,19 @@ import { createRef, memo, PureComponent } from "react";
 import { LoaderCircle } from "lucide-react";
 import { StickerImage } from "@/components/chat/sticker-image";
 import { getSticker } from "@/lib/stickers";
+import { observeReadMessages } from "@/lib/read-observer";
+import type { ReadObserver } from "@/lib/read-observer";
 import type { ChatStatus } from "@/lib/peer-chat";
 import type { Role } from "@/lib/protocol";
 import type { DisplayMessage, TranscriptState } from "@/lib/transcript";
-interface TranscriptProps { noteMode: boolean; fontSize: number; codeRoom: boolean; history: TranscriptState; status: ChatStatus; role: Role }
+interface TranscriptProps { noteMode: boolean; fontSize: number; codeRoom: boolean; history: TranscriptState; status: ChatStatus; role: Role; onReadVisible(ids: string[]): Promise<void> }
 type ScrollSnapshot = { bottom: true } | { bottom: false; key: string | null; offset: number } | null;
 const MessageRow = memo(function MessageRow({ message }: { message: DisplayMessage }) {
   const sticker = getSticker(message.text);
-  const delivery = message.delivery === "delivered" ? "전달됨" : message.delivery === "unconfirmed" ? "전달 확인 안 됨" : "전달 중";
+  const delivery = message.delivery === "read" ? "읽음" : message.delivery === "delivered" ? "전달됨" : message.delivery === "unconfirmed" ? "전달 확인 안 됨" : "전달 중";
   return <article className={`message ${message.mine ? "mine" : ""}`} data-message-key={message.key}>
     <span className="message-author">{message.nickname}{message.mine ? " · 나" : ""}</span>
-    <div className={`message-bubble${sticker ? " sticker-bubble" : ""}`}>{sticker ? <StickerImage sticker={sticker} /> : message.text}</div>
+    <div data-read-id={message.mine ? undefined : message.id} className={`message-bubble${sticker ? " sticker-bubble" : ""}`}>{sticker ? <StickerImage sticker={sticker} /> : message.text}</div>
     <time dateTime={message.isoTime}>{message.timeLabel}{message.mine && <span className="message-delivery" data-delivery={message.delivery}>{` · ${delivery}`}</span>}</time>
   </article>;
 });
@@ -20,10 +22,15 @@ const MessageRow = memo(function MessageRow({ message }: { message: DisplayMessa
 // Snapshot the visible anchor before React removes old DOM rows, not after eviction.
 export class Transcript extends PureComponent<TranscriptProps, Record<string, never>, ScrollSnapshot> {
   private scrollBox = createRef<HTMLDivElement>();
+  private readObserver?: ReadObserver;
   componentDidMount() {
     const box = this.scrollBox.current;
-    if (box) box.scrollTop = box.scrollHeight;
+    if (box) {
+      box.scrollTop = box.scrollHeight;
+      this.readObserver = observeReadMessages(box, () => this.props.status === "connected", ids => this.props.onReadVisible(ids));
+    }
   }
+  componentWillUnmount() { this.readObserver?.dispose(); }
   getSnapshotBeforeUpdate(previous: TranscriptProps): ScrollSnapshot {
     const box = this.scrollBox.current;
     const layoutChanged = previous.noteMode !== this.props.noteMode || previous.fontSize !== this.props.fontSize;
@@ -40,7 +47,11 @@ export class Transcript extends PureComponent<TranscriptProps, Record<string, ne
     return { bottom: false, key: null, offset: 0 };
   }
   componentDidUpdate(...args: [TranscriptProps, Record<string, never>, ScrollSnapshot]) {
-    const snapshot = args[2], box = this.scrollBox.current;
+    this.restoreScroll(args[2]);
+    this.readObserver?.refresh();
+  }
+  private restoreScroll(snapshot: ScrollSnapshot) {
+    const box = this.scrollBox.current;
     if (!box || !snapshot) return;
     if (snapshot.bottom) { box.scrollTop = box.scrollHeight; return; }
     const anchor = Array.from(box.querySelectorAll<HTMLElement>("[data-message-key]")).find(row => row.dataset.messageKey === snapshot.key);

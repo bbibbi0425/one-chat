@@ -47,3 +47,19 @@ test("clearing a room drops the transcript and old receipts cannot populate a ne
   assert.equal(transcriptReducer(fresh, { type: "delivered", id: old.id }), fresh);
   assert.equal(fresh.trimmedCount, 0);
 });
+
+test("batched read receipts affect only retained outgoing messages and never regress", () => {
+  const first = message(0, true), second = message(1, true), incoming = message(2, false);
+  const before = append(append(append(EMPTY_TRANSCRIPT, first), second), incoming);
+  const read = transcriptReducer(before, { type: "read", ids: [second.id, incoming.id, crypto.randomUUID()] });
+  assert.equal(read.messages[0], before.messages[0]);
+  assert.equal(read.messages[2], before.messages[2]);
+  assert.equal(read.messages[1].delivery, "read"); assert.equal(read.messages[1].delivered, true);
+  assert.equal(read.messages[1].timeLabel, before.messages[1].timeLabel);
+  for (const type of ["delivered", "unconfirmed"]) assert.equal(transcriptReducer(read, { type, id: second.id }), read);
+  assert.equal(transcriptReducer(read, { type: "read", ids: [second.id] }), read);
+  let trimmed = read;
+  for (let i = 0; i < MAX_RETAINED_MESSAGES; i++) trimmed = append(trimmed, message(i));
+  assert.equal(transcriptReducer(trimmed, { type: "read", ids: [first.id, second.id] }), trimmed);
+  assert.equal(transcriptReducer(EMPTY_TRANSCRIPT, { type: "read", ids: [second.id] }), EMPTY_TRANSCRIPT);
+});

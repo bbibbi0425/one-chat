@@ -32,6 +32,7 @@ export interface ChatOptions {
   createPeer(id: string, options: typeof PEER_OPTIONS): PeerPort;
   onStatus(status: ChatStatus, remoteNickname?: string): void;
   onMessage(message: ChatMessage): void; onDelivered(id: string): void; onUnconfirmed(id: string): void;
+  onRead?(ids: string[]): void;
   onEnd(reason: string): void;
   now?: () => number; monotonic?: () => number;
   // Code rooms claim two stable PeerServer slots; legacy invites stay unchanged.
@@ -159,6 +160,7 @@ export class PeerChat {
         onReady: nickname => { if (current()) { this.authenticated = true; this.options.onStatus("connected", nickname); } },
         onMessage: message => { if (current()) this.options.onMessage(message); },
         onDelivered: id => { if (current()) this.options.onDelivered(id); },
+        onRead: this.options.onRead ? ids => { if (current()) this.options.onRead?.(ids); } : undefined,
         onUnconfirmed: id => { if (current()) this.options.onUnconfirmed(id); },
         onClose: reason => { if (current()) this.finishWire(reason); },
       });
@@ -232,6 +234,10 @@ export class PeerChat {
     if (!this.remaining) { this.close("ROOM_EXPIRED"); return Promise.reject(new Error("ROOM_EXPIRED")); }
     if (this.closed || !this.session?.ready) return Promise.reject(new Error("DISCONNECTED"));
     return this.session.sendMessage(text);
+  }
+  markRead(ids: readonly string[]): Promise<void> {
+    if (this.closed || !this.session?.ready) return Promise.resolve();
+    return this.session.markRead(ids);
   }
   close(reason = "LEFT_ROOM") {
     if (this.closed) return;

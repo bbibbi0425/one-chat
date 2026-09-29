@@ -3,12 +3,13 @@ export const MAX_MESSAGE_CHARS = 2000;
 export const MAX_NICKNAME_CHARS = 20;
 export const MAX_MESSAGES = 2000;
 export const MAX_FRAME_CHARS = 20000;
+export const MAX_READ_IDS = 50;
 export const PEER_ID = /^oc-[0-9a-f]{32}$/;
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 export type Role = "host" | "guest";
 export interface Invite { version: 2; hostId: string; key: string; expiresAt: number }
 export interface ChatMessage { id: string; nickname: string; text: string; time: number; mine: boolean; delivered: boolean }
-export type Payload = { type: "ready"; nickname: string } | { type: "message"; id: string; text: string } | { type: "ack"; id: string } | { type: "ping" | "pong" };
+export type Payload = { type: "ready"; nickname: string; readReceipts?: true } | { type: "message"; id: string; text: string } | { type: "ack"; id: string } | { type: "read"; ids: string[] } | { type: "ping" | "pong" };
 export type Frame = { version: 2; type: "hello"; challenge: string } | { version: 2; type: "proof"; challenge?: string; proof: string } | { version: 2; type: "box"; sequence: number; ciphertext: string };
 export function encode64(bytes: Uint8Array): string {
   return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
@@ -48,7 +49,11 @@ export function validateNickname(value: unknown): string {
 export function validatePayload(value: unknown): Payload {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("INVALID_MESSAGE");
   const p = value as Record<string, unknown>;
-  if (p.type === "ready") return { type: "ready", nickname: validateNickname(p.nickname) };
+  if (p.type === "ready") return { type: "ready", nickname: validateNickname(p.nickname), ...(p.readReceipts === true ? { readReceipts: true as const } : {}) };
+  if (p.type === "read") {
+    if (!Array.isArray(p.ids) || p.ids.length === 0 || p.ids.length > MAX_READ_IDS || !p.ids.every(id => typeof id === "string" && UUID.test(id)) || new Set(p.ids).size !== p.ids.length) throw new Error("INVALID_MESSAGE");
+    return { type: "read", ids: [...p.ids] };
+  }
   if (p.type === "ping" || p.type === "pong") return { type: p.type };
   if ((p.type === "message" || p.type === "ack") && typeof p.id === "string" && UUID.test(p.id)) {
     if (p.type === "ack") return { type: "ack", id: p.id };

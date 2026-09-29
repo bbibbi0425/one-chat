@@ -4,7 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { STICKERS, getSticker, stickerMessage } from "../lib/stickers.ts";
 import { SecureSession } from "../lib/secure-session.ts";
 import { EMPTY_TRANSCRIPT, transcriptReducer } from "../lib/transcript.ts";
-import { createInvite, inviteHash, parseInvite, randomPeerId, randomToken, ROOM_TTL_MS, MAX_MESSAGES, MAX_FRAME_CHARS } from "../lib/protocol.ts";
+import { createInvite, inviteHash, parseInvite, randomPeerId, randomToken, ROOM_TTL_MS, MAX_MESSAGES, MAX_FRAME_CHARS, MAX_READ_IDS, validatePayload } from "../lib/protocol.ts";
 import { deriveTrafficKeys, makeProof, verifyProof, seal, unseal } from "../lib/crypto.ts";
 async function until(predicate) {
   const end = Date.now() + 4000;
@@ -13,9 +13,9 @@ async function until(predicate) {
 function pair(options = {}) {
   const clock = { wall: 1800000000000, mono: 0 };
   const invite = createInvite(clock.wall); const guestId = randomPeerId();
-  const result = { clock, invite, hostMessages: [], guestMessages: [], delivered: [], unconfirmed: [], closed: [], trace: [], blockHost: false, blockGuest: false };
+  const result = { clock, invite, hostMessages: [], guestMessages: [], delivered: [], read: [], unconfirmed: [], closed: [], trace: [], blockHost: false, blockGuest: false };
   let host, guest;
-  const base = { now: () => clock.wall, monotonic: () => clock.mono, invite, onReady() {}, onDelivered: id => result.delivered.push(id), onUnconfirmed: id => result.unconfirmed.push(id), closeWire() {} };
+  const base = { now: () => clock.wall, monotonic: () => clock.mono, invite, onReady() {}, onDelivered: id => result.delivered.push(id), onRead: ids => result.read.push(...ids), onUnconfirmed: id => result.unconfirmed.push(id), closeWire() {} };
   host = new SecureSession({ ...base, role: "host", localId: invite.hostId, remoteId: guestId, nickname: "호스트", onMessage: m => result.hostMessages.push(m), onClose: reason => result.closed.push(["host", reason]), send: raw => { result.trace.push(["host", raw]); if (!result.blockHost) queueMicrotask(() => void guest.receive(raw)); }, ...options.host });
   guest = new SecureSession({ ...base, role: "guest", localId: guestId, remoteId: invite.hostId, nickname: "손님", invite: { ...invite, ...options.guestInvite }, onMessage: m => result.guestMessages.push(m), onClose: reason => result.closed.push(["guest", reason]), send: raw => { result.trace.push(["guest", raw]); if (!result.blockGuest) queueMicrotask(() => void host.receive(raw)); }, ...options.guest });
   result.host = host; result.guest = guest;
@@ -202,4 +202,77 @@ test("stickers share encrypted delivery, text ordering and the combined 50-messa
   for (const sticker of STICKERS) assert.equal(JSON.stringify(p.trace).includes(sticker.id), false);
   assert.equal(p.host.ready && p.guest.ready, true);
   assert.deepEqual(p.closed, []);
+});
+
+test("delivery is separate from encrypted, message-specific, deduplicated read receipts", async () => {
+  const p = pair(); await ready(p);
+  await p.host.sendMessage("unread text");
+  await p.host.sendMessage(stickerMessage(STICKERS[0].id));
+  await until(() => p.delivered.length === 2);
+  const [first, second] = p.hostMessages;
+  assert.deepEqual(p.read, []);
+  const previous = p.trace.length;
+  await Promise.all([p.guest.markRead([second.id, second.id, crypto.randomUUID()]), p.guest.markRead([second.id])]);
+  await until(() => p.read.length === 1);
+  assert.deepEqual(p.read, [second.id]);
+  assert.equal(p.trace.length, previous + 1);
+  const encrypted = p.trace.at(-1)[1];
+  for (const secret of [second.id, '"type":"read"', "unread text"]) assert.equal(encrypted.includes(secret), false);
+  await p.guest.markRead([first.id]);
+  await until(() => p.read.length === 2);
+  assert.deepEqual(p.closed, []);
+});
+
+test("read confirmations can arrive before delivery acknowledgements without being downgraded", async () => {
+  let p;
+  p = pair({ guest: { onMessage: message => { p.guestMessages.push(message); void p.guest.markRead([message.id]); } } });
+  await ready(p); await p.host.sendMessage("visible immediately");
+  await until(() => p.read.length === 1);
+  assert.deepEqual(p.read, [p.hostMessages[0].id]);
+  p.clock.mono = 15000; p.host.tick();
+  assert.deepEqual(p.unconfirmed, []);
+  assert.equal(p.host.pending.size, 0);
+});
+
+test("older peers without read capability keep chatting and never receive read payloads", async () => {
+  for (const side of ["host", "guest"]) {
+    const p = pair({ [side]: { onRead: undefined } }); await ready(p);
+    await Promise.all([p.host.sendMessage("host text"), p.guest.sendMessage("guest text")]);
+    await until(() => p.delivered.length === 2);
+    const before = p.trace.length;
+    await p.guest.markRead(p.guestMessages.filter(m => !m.mine).map(m => m.id));
+    await p.host.markRead(p.hostMessages.filter(m => !m.mine).map(m => m.id));
+    assert.equal(p.trace.length, before); assert.deepEqual(p.read, []); assert.deepEqual(p.closed, []);
+  }
+});
+
+test("read receipt validation bounds the batch and rejects malformed or duplicate identifiers", () => {
+  const id = crypto.randomUUID();
+  assert.deepEqual(validatePayload({ type: "read", ids: [id] }), { type: "read", ids: [id] });
+  for (const ids of [[], "id", [null], ["bad"], [id, id], Array.from({ length: MAX_READ_IDS + 1 }, () => crypto.randomUUID())]) {
+    assert.throws(() => validatePayload({ type: "read", ids }), /INVALID_MESSAGE/);
+  }
+});
+
+test("read tracking stays bounded, ignores unknown IDs and drops pending work on close", async () => {
+  const p = pair(); await ready(p);
+  for (let i = 0; i <= MAX_READ_IDS; i++) {
+    await p.host.sendMessage("bounded " + i);
+    await until(() => p.delivered.length === i + 1);
+  }
+  assert.equal(p.host.awaitingRead.size, MAX_READ_IDS);
+  assert.equal(p.guest.readableIds.size, MAX_READ_IDS);
+  const before = p.trace.length;
+  await p.guest.markRead([p.hostMessages[0].id, crypto.randomUUID()]);
+  assert.equal(p.trace.length, before); assert.deepEqual(p.read, []);
+  await p.guest.sendBox({ type: "read", ids: [crypto.randomUUID()] });
+  await delay(10); assert.deepEqual(p.read, []);
+  const traceBeforeClose = p.trace.length;
+  const marking = p.guest.markRead([p.hostMessages.at(-1).id]);
+  p.guest.close();
+  await assert.rejects(marking);
+  assert.equal(p.trace.length, traceBeforeClose);
+  assert.equal(p.guest.readableIds.size, 0);
+  p.host.close();
+  assert.equal(p.host.awaitingRead.size, 0);
 });

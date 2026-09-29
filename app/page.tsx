@@ -119,6 +119,7 @@ export default function Home() {
         onStatus: (next, remote) => { if (generation.current === current) { setStatus(next); if (remote) setRemoteName(remote); } },
         onMessage: message => { if (generation.current === current) dispatch({ type: "append", message }); },
         onDelivered: id => { if (generation.current === current) dispatch({ type: "delivered", id }); },
+        onRead: ids => { if (generation.current === current) dispatch({ type: "read", ids }); },
         onUnconfirmed: id => { if (generation.current === current) dispatch({ type: "unconfirmed", id }); },
         onEnd: reason => { if (generation.current === current) { generation.current++; active.current = null; clearView(explanation(reason)); } },
       });
@@ -141,6 +142,7 @@ export default function Home() {
     if (!chat) throw new Error("DISCONNECTED");
     await chat.send(text);
   }, []);
+  const markVisibleMessagesRead = useCallback((ids: string[]) => room?.chat.markRead(ids) ?? Promise.resolve(), [room?.chat]);
   async function copyLink() {
     if (!room || (!room.code && room.role !== "host")) return;
     const current = generation.current;
@@ -173,7 +175,7 @@ export default function Home() {
             <p>같은 사이트에서 닉네임과 같은 입장 코드를 입력하세요. 먼저 들어온 사람이 기다리고 두 번째 사람이 자동으로 연결돼요. 처음에는 한 사람만 코드를 만들어 공유하세요.</p>
             <p>새로고침·나가기·연결 종료 시 대화가 끝나며 이전 내용은 다시 불러올 수 없어요. 연결 종료 감지에는 시간이 걸릴 수 있어요.</p>
             <p>글과 스티커를 합쳐 최근 {MAX_RETAINED_MESSAGES}개만 남겨요. 새 메시지로 한도를 넘으면 가장 오래된 내용부터 지우며 복원할 수 없어요. 지워져도 방과 연결은 유지돼요.</p>
-            <p>메시지는 이 탭의 메모리에만 두고 앱의 DB·브라우저 저장소에 기록하지 않아요. ‘전달됨’은 상대 앱에 도착했다는 뜻이며 읽음 표시는 아니에요.</p>
+            <p>메시지는 이 탭의 메모리에만 두고 앱의 DB·브라우저 저장소에 기록하지 않아요. ‘전달됨’은 상대 앱에 도착했다는 뜻이에요. ‘읽음’은 상대가 활성화한 채팅 창에서 해당 메시지가 화면에 표시됐다는 뜻이며, 실제로 내용을 읽었는지는 보장하지 않아요.</p>
             <p>입장 코드는 같은 방을 찾고 서로 연결을 확인하는 비밀 정보예요. 코드 하나당 동시에 두 자리만 사용하며, 코드를 아는 사람은 참여할 수 있어요. 같은 사람이 탭 두 개를 열어도 두 자리로 계산해요. 코드를 잊으면 앱에서 복구할 수 없어요.</p>
             <p>연결에 PeerJS Cloud와 Google STUN을 사용하며 IP·접속 정보가 남을 수 있어요. 직접 연결이 제한된 회사망에서는 사용할 수 없을 수 있어요. 회사 기기의 기록이나 상대방의 복사본까지 지우거나 숨기는 기능은 아니에요.</p>
           </div>
@@ -223,7 +225,7 @@ export default function Home() {
         </div>
       </header>
       {copyFallback && status !== "connected" && <div className="manual-copy"><label htmlFor="invite-link">{room.code ? "코드를 선택해 복사하세요" : "링크를 선택해 복사하세요"}</label><Input id="invite-link" readOnly value={copyFallback} onFocus={e => e.target.select()} /></div>}
-      <Transcript history={history} status={status} role={room.role} noteMode={noteMode} fontSize={fontSize} codeRoom={!!room.code} />
+      <Transcript history={history} status={status} role={room.role} noteMode={noteMode} fontSize={fontSize} codeRoom={!!room.code} onReadVisible={markVisibleMessagesRead} />
       <Composer connected={status === "connected"} onSend={sendMessage} noteMode={noteMode} />
     </section>}
   </main>;

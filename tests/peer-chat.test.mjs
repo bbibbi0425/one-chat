@@ -26,8 +26,8 @@ function network() {
   }
   const chats = [];
   function participant(role, invite, extra = {}) {
-    const state = { status: "preparing", messages: [], delivered: [], ended: [] };
-    const chat = new PeerChat({ role, invite, nickname: role === "host" ? "private-host" : "private-guest", createPeer: (id, options) => new Peer(id, options), onStatus: s => { state.status = s; }, onMessage: m => state.messages.push(m), onDelivered: id => state.delivered.push(id), onUnconfirmed() {}, onEnd: r => { state.ended.push(r); state.messages = []; }, ...extra });
+    const state = { status: "preparing", messages: [], delivered: [], read: [], ended: [] };
+    const chat = new PeerChat({ role, invite, nickname: role === "host" ? "private-host" : "private-guest", createPeer: (id, options) => new Peer(id, options), onStatus: s => { state.status = s; }, onMessage: m => state.messages.push(m), onDelivered: id => state.delivered.push(id), onRead: ids => state.read.push(...ids), onUnconfirmed() {}, onEnd: r => { state.ended.push(r); state.messages = []; }, ...extra });
     chats.push(chat); chat.start(); return { chat, state };
   }
   return { peers, optionsSeen, connects, participant, close: () => chats.forEach(chat => chat.close()) };
@@ -70,4 +70,18 @@ test("oversized RTC buffers fail closed instead of accumulating unsent plaintext
   const n = network(); t.after(n.close); const invite = createInvite(), host = n.participant("host", invite), guest = n.participant("guest", invite);
   await until(() => guest.state.status === "connected"); n.peers.get(invite.hostId).wires[0].dataChannel.bufferedAmount = 300000;
   await assert.rejects(host.chat.send("buffer full")); assert.equal(host.state.ended.length, 1); assert.equal(guest.state.ended.length, 1);
+});
+
+test("the peer adapter forwards visible-message confirmations only within the active session", async t => {
+  const n = network(); t.after(n.close);
+  const invite = createInvite(), host = n.participant("host", invite), guest = n.participant("guest", invite);
+  await until(() => host.state.status === "connected" && guest.state.status === "connected");
+  await host.chat.send("visible"); await until(() => host.state.delivered.length === 1);
+  assert.deepEqual(host.state.read, []);
+  const id = guest.state.messages[0].id;
+  await guest.chat.markRead([id]); await until(() => host.state.read.length === 1);
+  assert.deepEqual(host.state.read, [id]);
+  guest.chat.close();
+  await guest.chat.markRead([id]);
+  assert.equal(host.state.read.length, 1);
 });

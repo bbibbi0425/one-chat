@@ -1,7 +1,7 @@
 import type { ChatMessage } from "./protocol.ts";
 
 export const MAX_RETAINED_MESSAGES = 50;
-export type Delivery = "pending" | "delivered" | "unconfirmed";
+export type Delivery = "pending" | "delivered" | "unconfirmed" | "read";
 export interface DisplayMessage extends ChatMessage {
   key: string;
   delivery: Delivery;
@@ -16,6 +16,7 @@ export interface TranscriptState {
 export type TranscriptAction =
   | { type: "append"; message: ChatMessage }
   | { type: "delivered" | "unconfirmed"; id: string }
+  | { type: "read"; ids: readonly string[] }
   | { type: "clear" };
 export const EMPTY_TRANSCRIPT: TranscriptState = { messages: [], trimmedCount: 0, sentRevision: 0 };
 const timeFormatter = new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -39,10 +40,20 @@ export function transcriptReducer(state: TranscriptState, action: TranscriptActi
       sentRevision: state.sentRevision + (message.mine ? 1 : 0),
     };
   }
+  if (action.type === "read") {
+    const ids = new Set(action.ids);
+    let changed = false;
+    const messages = state.messages.map(message => {
+      if (!message.mine || message.delivery === "read" || !ids.has(message.id)) return message;
+      changed = true;
+      return { ...message, delivery: "read" as const, delivered: true };
+    });
+    return changed ? { ...state, messages } : state;
+  }
   const index = state.messages.findIndex(message => message.mine && message.id === action.id);
   if (index < 0) return state; // Late receipts never recreate evicted text or UI metadata.
   const previous = state.messages[index];
-  if (previous.delivery === "delivered" || previous.delivery === action.type) return state;
+  if (previous.delivery === "read" || previous.delivery === "delivered" || previous.delivery === action.type) return state;
   const messages = [...state.messages];
   messages[index] = { ...previous, delivery: action.type, delivered: action.type === "delivered" };
   return { ...state, messages };

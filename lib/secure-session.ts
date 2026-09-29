@@ -1,12 +1,13 @@
 import { deriveTrafficKeys, makeProof, seal, unseal, verifyProof } from "./crypto.ts";
 import type { TrafficKeys, Transcript } from "./crypto.ts";
-import { MAX_FRAME_CHARS, MAX_MESSAGES, PEER_ID, parseFrame, randomToken, ROOM_TTL_MS, validateNickname, validatePayload } from "./protocol.ts";
+import { MAX_FRAME_CHARS, MAX_MESSAGES, MAX_READ_IDS, PEER_ID, parseFrame, randomToken, ROOM_TTL_MS, validateNickname, validatePayload } from "./protocol.ts";
 import type { ChatMessage, Frame, Invite, Payload, Role } from "./protocol.ts";
 export interface SessionOptions {
   invite: Invite; role: Role; localId: string; remoteId: string; nickname: string;
   send(data: string): void; closeWire(): void;
   onReady(nickname: string): void; onMessage(message: ChatMessage): void;
   onDelivered(id: string): void; onUnconfirmed(id: string): void; onClose(reason: string): void;
+  onRead?(ids: string[]): void;
   now?: () => number; monotonic?: () => number; deadline?: number;
 }
 export class SecureSession {
@@ -27,6 +28,9 @@ export class SecureSession {
   private receivedIds = new Set<string>();
   private pending = new Map<string, number>();
   private unconfirmed = new Set<string>();
+  private readReceipts = false;
+  private awaitingRead = new Set<string>();
+  private readableIds = new Set<string>();
   private sentCount = 0;
   private receivedCount = 0;
   private queuedFrames = 0;
@@ -96,7 +100,7 @@ export class SecureSession {
       const keys = await deriveTrafficKeys(this.options.invite, this.transcript(), "guest");
       if (!this.alive()) return;
       this.keys = keys; this.state = "ready-proof";
-      await this.sendBox({ type: "ready", nickname: this.options.nickname }); return;
+      await this.sendBox({ type: "ready", nickname: this.options.nickname, readReceipts: this.options.onRead ? true : undefined }); return;
     }
     if (frame.type !== "box" || !this.keys || frame.sequence !== this.receiveSequence + 1) throw new Error("INVALID_SEQUENCE");
     const payload = await unseal(this.keys, frame.sequence, frame.ciphertext);
@@ -104,7 +108,9 @@ export class SecureSession {
     this.receiveSequence = frame.sequence;
     if (this.state === "ready-proof" && payload.type === "ready") {
       this.remoteNickname = payload.nickname;
-      if (this.options.role === "host") await this.sendBox({ type: "ready", nickname: this.options.nickname });
+      // Older clients ignore the optional ready field; never send them a new frame type.
+      this.readReceipts = payload.readReceipts === true && !!this.options.onRead;
+      if (this.options.role === "host") await this.sendBox({ type: "ready", nickname: this.options.nickname, readReceipts: this.options.onRead ? true : undefined });
       if (!this.alive()) return;
       this.state = "ready"; this.options.onReady(this.remoteNickname); return;
     }
@@ -112,10 +118,16 @@ export class SecureSession {
     if (payload.type === "message") {
       if (this.receivedIds.has(payload.id) || this.receivedCount >= MAX_MESSAGES) throw new Error("MESSAGE_LIMIT");
       this.receivedIds.add(payload.id); this.receivedCount++;
+      if (this.readReceipts) this.retainReadId(this.readableIds, payload.id);
       this.options.onMessage({ id: payload.id, nickname: this.remoteNickname, text: payload.text, time: this.now(), mine: false, delivered: true });
       await this.sendBox({ type: "ack", id: payload.id });
     } else if (payload.type === "ack") {
       if (this.pending.delete(payload.id) || this.unconfirmed.delete(payload.id)) this.options.onDelivered(payload.id);
+    } else if (payload.type === "read") {
+      if (!this.readReceipts) throw new Error("INVALID_STATE");
+      const ids = payload.ids.filter(id => this.awaitingRead.delete(id));
+      for (const id of ids) { this.pending.delete(id); this.unconfirmed.delete(id); }
+      if (ids.length) this.options.onRead?.(ids);
     } else if (payload.type === "ping") await this.sendBox({ type: "pong" });
   }
   private sendBox(payload: Payload): Promise<void> {
@@ -134,8 +146,20 @@ export class SecureSession {
     if (this.sentCount >= MAX_MESSAGES || this.pending.size >= 64) throw new Error("MESSAGE_LIMIT");
     const id = crypto.randomUUID(); const payload = validatePayload({ type: "message", id, text });
     this.sentCount++; this.pending.set(id, this.mono());
+    if (this.readReceipts) this.retainReadId(this.awaitingRead, id);
     this.options.onMessage({ id, nickname: this.options.nickname, text, time: this.now(), mine: true, delivered: false });
     await this.sendBox(payload);
+  }
+  private retainReadId(ids: Set<string>, id: string) {
+    ids.add(id);
+    if (ids.size > MAX_READ_IDS) ids.delete(ids.values().next().value!);
+  }
+  async markRead(ids: readonly string[]): Promise<void> {
+    if (!this.alive() || !this.ready || !this.readReceipts) return;
+    // Deleting before encryption coalesces repeated visibility events and rejects
+    // unrelated IDs. Only identifiers, never extra message text, are retained here.
+    const selected = ids.slice(0, MAX_READ_IDS).filter(id => this.readableIds.delete(id));
+    if (selected.length) await this.sendBox({ type: "read", ids: selected });
   }
   tick() {
     if (!this.alive()) return;
@@ -152,6 +176,7 @@ export class SecureSession {
     this.closed = true; this.keys = undefined; this.hostChallenge = this.guestChallenge = this.remoteNickname = "";
     this.options.invite.key = ""; this.options.nickname = "";
     this.receivedIds.clear(); this.pending.clear(); this.unconfirmed.clear();
+    this.awaitingRead.clear(); this.readableIds.clear(); this.readReceipts = false;
     try { this.options.closeWire(); } finally { this.options.onClose(reason); }
   }
 }
