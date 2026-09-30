@@ -266,3 +266,10 @@ button:disabled { cursor: default; }
 .code-actions button { min-height: 2.25rem; height: auto; padding: .25rem .375rem; color: #667181; font-size: .875rem; }
 .entry-hint.code-hint { margin-top: .375rem; }
 [data-theme="notes"] .code-actions button { color: #606060; }
+
+.entry-mode-switch { display: flex; width: 100%; padding: .1875rem; margin: -.375rem 0 1rem; gap: .1875rem; border: .0625rem solid #dfe3e8; border-radius: .5rem; background: #f3f5f7; }
+.entry-mode-option { flex: 1; min-width: 0; min-height: 2.375rem; height: auto; padding: .375rem .5rem; border-radius: .3125rem; color: #667181; font-size: .875rem; line-height: 1.5; white-space: normal; }
+.entry-mode-option[data-state="on"] { background: #fff; color: #293b53; box-shadow: 0 .0625rem .1875rem #24334915; }
+[data-theme="notes"] .entry-mode-switch { border-color: #d4d4d4; border-radius: .1875rem; background: #f3f3f3; }
+[data-theme="notes"] .entry-mode-option { border-radius: .125rem; color: #606060; }
+[data-theme="notes"] .entry-mode-option[data-state="on"] { color: #292929; }

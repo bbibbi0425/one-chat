@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 import { createRoomCode, normalizeRoomCode, deriveCodeRoom } from "../lib/code-room.ts";
+import { deriveOpenRoom } from "../lib/entry-mode.ts";
 import { PeerChat } from "../lib/peer-chat.ts";
 import { ROOM_TTL_MS, randomToken } from "../lib/protocol.ts";
 
@@ -161,4 +162,22 @@ test("a browser refusing RTC creation produces a visible failure and releases it
   await until(() => guest.state.ended.length);
   assert.deepEqual(guest.state.ended, ["RTC_UNAVAILABLE"]); assert.equal(host.state.status, "waiting");
   assert.equal(n.peers.size, 1);
+});
+
+test("base-address participants pair in the shared room, reject a third and stay separate from code rooms", async t => {
+  const n = network(); t.after(n.close);
+  const address = "https://example.github.io/one-chat/";
+  const room = await deriveOpenRoom(address);
+  const first = n.participant(room), second = n.participant(await deriveOpenRoom(address + "?window=compact&theme=notes"));
+  const coded = n.participant(await deriveCodeRoom(createRoomCode()));
+  await until(() => first.state.status === "connected" && second.state.status === "connected" && coded.state.status === "waiting");
+  const third = n.participant(room); await until(() => third.state.ended.length);
+  assert.deepEqual(third.state.ended, ["ROOM_FULL"]);
+  await first.chat.send("shared room"); await until(() => second.state.messages.length === 1);
+  assert.equal(coded.state.messages.length, 0);
+  first.chat.close(); assert.equal(second.state.ended.length, 1);
+  const next = n.participant(await deriveOpenRoom(address));
+  await until(() => next.state.status === "waiting");
+  const partner = n.participant(room); await until(() => partner.state.status === "connected");
+  assert.equal(next.state.messages.length, 0); assert.equal(partner.state.messages.length, 0);
 });

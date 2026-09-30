@@ -14,22 +14,24 @@ import { EMPTY_TRANSCRIPT, MAX_RETAINED_MESSAGES, transcriptReducer } from "@/li
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { PeerChat } from "@/lib/peer-chat";
 import type { ChatStatus } from "@/lib/peer-chat";
-import { ROOM_TTL_MS, inviteHash, parseInvite, MAX_NICKNAME_CHARS } from "@/lib/protocol";
+import { inviteHash, parseInvite, MAX_NICKNAME_CHARS } from "@/lib/protocol";
 import type { Invite, Role } from "@/lib/protocol";
-import { createRoomCode, deriveCodeRoom, normalizeRoomCode } from "@/lib/code-room";
+import { createRoomCode } from "@/lib/code-room";
+import { prepareRoomEntry } from "@/lib/entry-mode";
+import type { EntryMode, RoomMode } from "@/lib/entry-mode";
 import { useRoomStatusTool } from "@/hooks/use-room-status-tool";
 
-type RoomView = { invite: Invite; role: Role; nickname: string; chat: PeerChat; code: string };
+type RoomView = { invite: Invite; role: Role; nickname: string; chat: PeerChat; code: string; mode: RoomMode };
 const labels: Record<ChatStatus, string> = { preparing: "준비 중", waiting: "대기 중", connecting: "연결 중", authenticating: "확인 중", connected: "연결됨" };
 function explanation(reason: string) {
-  if (reason === "ROOM_FULL") return "이미 두 사람이 이 코드를 사용 중이에요. 다른 탭이나 작은 창이 열려 있는지도 확인해 주세요. 이미 닫았다면 잠시 뒤 다시 시도하세요.";
+  if (reason === "ROOM_FULL") return "이 방에 이미 두 사람이 접속 중이에요. 다른 탭이나 작은 창이 열려 있는지도 확인해 주세요. 이미 닫았다면 잠시 뒤 다시 시도하세요.";
   if (reason === "SIGNAL_UNAVAILABLE" || reason === "SIGNAL_TIMEOUT") return "연결 서비스에 접속하지 못했거나 접속이 끊겼어요. 네트워크에서 연결 서비스 접속을 허용하는지 확인해 주세요. [연결 서비스]";
   if (reason === "RTC_UNAVAILABLE") return "이 브라우저에서 실시간 연결을 시작하지 못했어요. 브라우저 지원 여부나 관리 정책을 확인해 주세요. [직접 연결 시작]";
   if (reason === "RTC_TIMEOUT") return "상대방을 찾았지만 직접 연결하지 못했어요. 회사망·VMware의 네트워크 제한일 수 있으며, 입장 코드나 주소를 바꾸는 것만으로는 해결되지 않아요. [직접 연결]";
   if (reason === "ROOM_EXPIRED") return "방의 9시간이 끝났어요. 다시 입장해 새 대화를 시작해 주세요.";
   if (reason === "LEFT_ROOM") return "방에서 나왔어요. 이전 대화는 다시 불러올 수 없어요.";
-  if (reason === "AUTH_FAILED" || reason === "AUTH_TIMEOUT" || reason === "INVALID_FRAME") return "연결 정보를 확인하지 못했어요. 같은 입장 코드 또는 초대 링크를 사용했는지 확인해 주세요. [연결 확인]";
-  if (reason === "ROOM_UNAVAILABLE") return "상대방이 나갔거나 아직 준비되지 않았어요. 같은 코드로 다시 입장해 주세요. 초대 링크로 입장했다면 초대한 사람이 창을 열어 두어야 해요.";
+  if (reason === "AUTH_FAILED" || reason === "AUTH_TIMEOUT" || reason === "INVALID_FRAME") return "연결 정보를 확인하지 못했어요. 같은 입장 방식과 주소·코드를 사용했는지 확인해 주세요. [연결 확인]";
+  if (reason === "ROOM_UNAVAILABLE") return "상대방이 나갔거나 아직 준비되지 않았어요. 같은 입장 방식으로 다시 들어와 주세요. 초대 링크로 입장했다면 초대한 사람이 창을 열어 두어야 해요.";
   if (reason === "DISCONNECTED") return "상대방이 나갔거나 연결이 끊겨 방이 끝났어요. 이전 대화는 복원되지 않아요.";
   return "직접 연결하지 못했어요. 네트워크 환경에서 연결이 제한되거나 연결 서비스가 응답하지 않을 수 있어요.";
 }
@@ -43,6 +45,7 @@ export default function Home() {
   const [noteMode, setNoteMode] = useState(() => readWindowMode(window.location.search).noteMode);
   const [fontSize, setFontSize] = useState(() => readWindowMode(window.location.search).fontSize);
   const [entry, setEntry] = useState(readInvite);
+  const [entryMode, setEntryMode] = useState<EntryMode>(() => readWindowMode(window.location.search).entryMode);
   const [nickname, setNickname] = useState("");
   const [roomCode, setRoomCode] = useState("");
   const [joining, setJoining] = useState(false);
@@ -100,21 +103,24 @@ export default function Home() {
     };
   }, [end, stopTransport]);
 
+  function selectEntryMode(mode: string) {
+    if ((mode !== "open" && mode !== "code") || joinPending.current || active.current) return;
+    setEntryMode(mode); setEntry({ invite: null, error: "" });
+    setError(""); setNotice(""); setCodeCopied(false);
+  }
   async function enterRoom() {
-    if (active.current || joinPending.current || !nickname.trim()) return;
+    if (active.current || joinPending.current || !nickname.trim() || entry.error) return;
     setError(""); setNotice("");
     if (!window.isSecureContext || !crypto.subtle || !window.RTCPeerConnection) { setError("HTTPS 또는 localhost에서 최신 브라우저로 접속해 주세요."); return; }
     joinPending.current = true; setJoining(true);
     const current = ++generation.current, name = nickname.trim();
     try {
-      const code = entry.invite ? "" : normalizeRoomCode(roomCode).match(/.{4}/g)!.join("-");
-      const fixed = code ? await deriveCodeRoom(code) : null;
+      const prepared = await prepareRoomEntry(entryMode, roomCode, window.location.href, entry.invite);
       if (generation.current !== current) return;
-      const invite: Invite = entry.invite ?? { version: 2, hostId: fixed!.hostId, key: fixed!.key, expiresAt: Date.now() + ROOM_TTL_MS };
-      if (invite.expiresAt <= Date.now()) { setError(explanation("ROOM_EXPIRED")); return; }
-      const target: Omit<RoomView, "chat"> = { invite, role: entry.invite ? "guest" : "host", nickname: name, code };
+      const { invite, role, code, mode, fixedGuestId } = prepared;
+      const target: Omit<RoomView, "chat"> = { invite, role, nickname: name, code, mode };
       setEntry({ invite: null, error: "" }); setStatus("preparing"); dispatch({ type: "clear" });
-      const chat = new PeerChat({ role: target.role, invite, nickname: name, fixedGuestId: fixed?.guestId, createPeer: (id, options) => new Peer(id, options),
+      const chat = new PeerChat({ role: target.role, invite, nickname: name, fixedGuestId, createPeer: (id, options) => new Peer(id, options),
         onRoom: (role, nextInvite) => { if (generation.current === current) setRoom(value => value?.chat === chat ? { ...value, role, invite: nextInvite } : value); },
         onStatus: (next, remote) => { if (generation.current === current) { setStatus(next); if (remote) setRemoteName(remote); } },
         onMessage: message => { if (generation.current === current) dispatch({ type: "append", message }); },
@@ -127,6 +133,7 @@ export default function Home() {
     } catch (cause) {
       if (generation.current !== current) return;
       if (cause instanceof Error && cause.message === "INVALID_ROOM_CODE") setError("입장 코드는 20자리 영문·숫자예요. 처음이라면 한 사람이 ‘코드 만들기’를 눌러 공유해 주세요.");
+      else if (cause instanceof Error && cause.message === "ROOM_EXPIRED") setError(explanation("ROOM_EXPIRED"));
       else end("CONNECTION_FAILED");
     } finally {
       if (generation.current === current) { joinPending.current = false; setJoining(false); }
@@ -144,7 +151,7 @@ export default function Home() {
   }, []);
   const markVisibleMessagesRead = useCallback((ids: string[]) => room?.chat.markRead(ids) ?? Promise.resolve(), [room?.chat]);
   async function copyLink() {
-    if (!room || (!room.code && room.role !== "host")) return;
+    if (!room || room.mode === "open" || (!room.code && room.role !== "host")) return;
     const current = generation.current;
     const link = room.code || `${window.location.origin}${window.location.pathname}${inviteHash(room.invite)}`;
     try { await navigator.clipboard.writeText(link); if (generation.current === current) setCopied(true); }
@@ -163,7 +170,7 @@ export default function Home() {
           <output className="font-size-value" aria-label={`글자 크기 ${fontSize}픽셀`} aria-live="polite" aria-atomic="true">{fontSize}</output>
           <Button type="button" variant="ghost" className="font-size-button" aria-label="글자 크게" title="글자 크게" disabled={fontSize >= MAX_FONT_SIZE} onClick={() => setFontSize(size => Math.min(MAX_FONT_SIZE, size + 1))}>A+</Button>
         </div>
-        <WindowOptions joined={!!room || joining} invite={entry.invite} inviteError={!!entry.error} noteMode={noteMode} fontSize={fontSize} />
+        <WindowOptions joined={!!room || joining} invite={entry.invite} inviteError={!!entry.error} noteMode={noteMode} fontSize={fontSize} entryMode={entryMode} />
       <Dialog>
         <DialogTrigger asChild><Button variant="ghost" className="help-button"><Info aria-hidden="true" />안내</Button></DialogTrigger>
         <DialogContent data-theme={noteMode ? "notes" : "default"} className="help-dialog" showCloseButton={false} onOpenAutoFocus={event => { event.preventDefault(); helpTitle.current?.focus(); }}>
@@ -172,7 +179,8 @@ export default function Home() {
             <DialogDescription>두 사람 전용 · 최대 9시간</DialogDescription>
           </DialogHeader>
           <div className="help-copy">
-            <p>같은 사이트에서 닉네임과 같은 입장 코드를 입력하세요. 먼저 들어온 사람이 기다리고 두 번째 사람이 자동으로 연결돼요. 처음에는 한 사람만 코드를 만들어 공유하세요.</p>
+            <p>‘바로 입장’은 같은 기본 주소에서 닉네임만 입력하면 연결돼요. 먼저 들어온 사람이 기다리고 두 번째 사람이 자동으로 연결돼요. 주소를 아는 누구나 빈자리에 들어올 수 있는 공용방이에요.</p>
+            <p>‘코드 입장’은 같은 코드를 입력한 사람끼리 별도 방에서 만나요. 처음에는 한 사람만 코드를 만들어 공유하세요. 대화가 끝난 뒤 입장 화면에서 방식을 바꿀 수 있어요.</p>
             <p>새로고침·나가기·연결 종료 시 대화가 끝나며 이전 내용은 다시 불러올 수 없어요. 연결 종료 감지에는 시간이 걸릴 수 있어요.</p>
             <p>글과 스티커를 합쳐 최근 {MAX_RETAINED_MESSAGES}개만 남겨요. 새 메시지로 한도를 넘으면 가장 오래된 내용부터 지우며 복원할 수 없어요. 지워져도 방과 연결은 유지돼요.</p>
             <p>메시지는 이 탭의 메모리에만 두고 앱의 DB·브라우저 저장소에 기록하지 않아요. ‘전달됨’은 상대 앱에 도착했다는 뜻이에요. ‘읽음’은 상대가 활성화한 채팅 창에서 해당 메시지가 화면에 표시됐다는 뜻이며, 실제로 내용을 읽었는지는 보장하지 않아요.</p>
@@ -187,10 +195,14 @@ export default function Home() {
     {!room ? <section className="entry-layout" aria-labelledby="entry-title">
       <div className="entry-card">
         <h1 id="entry-title">{noteMode ? "메모 열기" : "입장"}</h1>
+        {!entry.invite && !entry.error && <ToggleGroup type="single" value={entryMode} onValueChange={selectEntryMode} disabled={joining} className="entry-mode-switch" aria-label="입장 방식">
+          <ToggleGroupItem value="open" className="entry-mode-option">바로 입장</ToggleGroupItem>
+          <ToggleGroupItem value="code" className="entry-mode-option">코드 입장</ToggleGroupItem>
+        </ToggleGroup>}
         <form onSubmit={event => { event.preventDefault(); void enterRoom(); }}>
           <label htmlFor="nickname">{noteMode ? "표시 이름" : "닉네임"}</label>
           <Input id="nickname" className="name-input" autoComplete="off" spellCheck={false} maxLength={MAX_NICKNAME_CHARS} value={nickname} disabled={joining} onChange={event => setNickname(event.target.value)} placeholder="20자 이내" required />
-          {!entry.invite && !entry.error && <div className="code-field">
+          {entryMode === "code" && !entry.invite && !entry.error && <div className="code-field">
             <label htmlFor="room-code">입장 코드</label>
             <Input id="room-code" className="name-input code-input" autoComplete="off" autoCapitalize="characters" spellCheck={false} maxLength={64} value={roomCode} disabled={joining} onChange={event => { setRoomCode(event.target.value); setCodeCopied(false); }} placeholder="두 사람이 같은 코드 입력" aria-describedby="code-hint" required />
             <div className="code-actions">
@@ -199,12 +211,12 @@ export default function Home() {
             </div>
             <p className="entry-hint code-hint" id="code-hint">처음에는 한 사람만 코드를 만들어 공유하세요. 다음에도 같은 코드를 쓰면 돼요.</p>
           </div>}
-          <Button className="primary-action" type="submit" disabled={joining || !nickname.trim() || !!entry.error || (!entry.invite && !roomCode.trim())}>{joining ? "준비 중…" : noteMode ? "열기" : "입장하기"}</Button>
+          <Button className="primary-action" type="submit" disabled={joining || !nickname.trim() || !!entry.error || (!entry.invite && entryMode === "code" && !roomCode.trim())}>{joining ? "준비 중…" : noteMode ? "열기" : "입장하기"}</Button>
         </form>
         {(error || entry.error) && <p className="error" role="alert">{error || entry.error}</p>}
         {notice && <p className="notice" role="status">{notice}</p>}
-        {(entry.invite || entry.error) && <Button variant="ghost" className="new-room-link" onClick={() => { setEntry({ invite: null, error: "" }); setError(""); }}>{noteMode ? "입장 코드로 열기" : "입장 코드로 시작"}</Button>}
-        <p className="entry-hint">{entry.invite ? "이전 초대 링크로 입장해요. 초대한 사람이 창을 열어 두어야 해요." : "같은 코드로 최대 2명 · 둘 다 창을 열어 두세요."}</p>
+        {(entry.invite || entry.error) && <Button variant="ghost" className="new-room-link" disabled={joining} onClick={() => selectEntryMode("open")}>기본 주소로 입장</Button>}
+        <p className="entry-hint">{entry.invite ? "이전 초대 링크로 입장해요. 초대한 사람이 창을 열어 두어야 해요." : entryMode === "open" ? "같은 주소에서 최대 2명. 주소를 아는 누구나 참여할 수 있어요." : "같은 코드로 최대 2명 · 둘 다 창을 열어 두세요."}</p>
       </div>
     </section> : <section className="chat-panel" aria-label="대화방" key={room.invite.hostId}>
       <header className="chat-header">
@@ -214,7 +226,7 @@ export default function Home() {
             <span className="nickname-tag" title={noteMode ? `${room.nickname}${remoteName ? ` · ${remoteName}` : ""}` : room.nickname}>{noteMode ? `${room.nickname}${remoteName ? ` · ${remoteName}` : ""}` : `나: ${room.nickname}`}</span>
           </div>
           <div className="room-actions">
-            {(!!room.code || room.role === "host") && status !== "connected" && <Button variant="outline" className="tool-button" disabled={status === "preparing"} aria-label={room.code ? "입장 코드 복사" : "초대 링크 복사"} title={room.code ? "입장 코드 복사" : "초대 링크 복사"} onClick={() => void copyLink()}>{copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}{copied ? "복사됨" : room.code ? "코드" : "링크"}</Button>}
+            {room.mode !== "open" && (!!room.code || room.role === "host") && status !== "connected" && <Button variant="outline" className="tool-button" disabled={status === "preparing"} aria-label={room.code ? "입장 코드 복사" : "초대 링크 복사"} title={room.code ? "입장 코드 복사" : "초대 링크 복사"} onClick={() => void copyLink()}>{copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}{copied ? "복사됨" : room.code ? "코드" : "링크"}</Button>}
             <Button variant="ghost" className="tool-button" onClick={() => end()} aria-label="방 나가기" title="방 나가기">{noteMode ? <X aria-hidden="true" /> : <LogOut aria-hidden="true" />}{noteMode ? "닫기" : "나가기"}</Button>
           </div>
         </div>
@@ -225,7 +237,7 @@ export default function Home() {
         </div>
       </header>
       {copyFallback && status !== "connected" && <div className="manual-copy"><label htmlFor="invite-link">{room.code ? "코드를 선택해 복사하세요" : "링크를 선택해 복사하세요"}</label><Input id="invite-link" readOnly value={copyFallback} onFocus={e => e.target.select()} /></div>}
-      <Transcript history={history} status={status} role={room.role} noteMode={noteMode} fontSize={fontSize} codeRoom={!!room.code} onReadVisible={markVisibleMessagesRead} />
+      <Transcript history={history} status={status} role={room.role} noteMode={noteMode} fontSize={fontSize} roomMode={room.mode} onReadVisible={markVisibleMessagesRead} />
       <Composer connected={status === "connected"} onSend={sendMessage} noteMode={noteMode} />
     </section>}
   </main>;
